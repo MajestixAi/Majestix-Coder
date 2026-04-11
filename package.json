@@ -1,0 +1,386 @@
+{
+  "name": "majestix-coder",
+  "displayName": "Majestix Coder",
+  "description": "Agentic AI coding assistant powered by the Majestix multi-model platform — reads files, writes code, and runs commands with human approval.",
+  "version": "1.0.0",
+  "publisher": "MajestixAi",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/MajestixAi/Majestix-Coder"
+  },
+  "bugs": {
+    "url": "https://github.com/MajestixAi/Majestix-Coder/issues"
+  },
+  "homepage": "https://majestix.ai",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "AI",
+    "Programming Languages",
+    "Machine Learning"
+  ],
+  "keywords": [
+    "ai",
+    "code assistant",
+    "majestix",
+    "multi-model",
+    "gpt",
+    "claude",
+    "gemini"
+  ],
+  "icon": "resources/majestix-logo.png",
+  "activationEvents": [],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "majestix.ask",
+        "title": "Ask AI",
+        "category": "Majestix"
+      },
+      {
+        "command": "majestix.explain",
+        "title": "Explain Code",
+        "category": "Majestix"
+      },
+      {
+        "command": "majestix.refactor",
+        "title": "Refactor",
+        "category": "Majestix"
+      },
+      {
+        "command": "majestix.fix",
+        "title": "Fix Error",
+        "category": "Majestix"
+      },
+      {
+        "command": "majestix.generate",
+        "title": "Generate Code",
+        "category": "Majestix"
+      },
+      {
+        "command": "majestix.review",
+        "title": "Review Code",
+        "category": "Majestix"
+      },
+      {
+        "command": "majestix.setApiKey",
+        "title": "Set API Key",
+        "category": "Majestix"
+      },
+      {
+        "command": "majestix.clearApiKey",
+        "title": "Clear API Key",
+        "category": "Majestix"
+      },
+      {
+        "command": "majestix.resetSettings",
+        "title": "Reset All Settings to Defaults",
+        "category": "Majestix"
+      },
+      {
+        "command": "majestix.newChat",
+        "title": "New Chat",
+        "category": "Majestix"
+      },
+      {
+        "command": "majestix.sessionHistory",
+        "title": "Session History",
+        "category": "Majestix"
+      },
+      {
+        "command": "majestix.moveToSecondarySidebar",
+        "title": "Move to Secondary Side Bar",
+        "category": "Majestix"
+      },
+      {
+        "command": "majestix.openInTab",
+        "title": "Majestix AI",
+        "category": "Majestix",
+        "icon": {
+          "light": "resources/icon.svg",
+          "dark": "resources/icon.svg"
+        }
+      },
+      {
+        "command": "majestix.sendTerminal",
+        "title": "Send Terminal Output to Chat",
+        "category": "Majestix"
+      },
+      {
+        "command": "majestix.createRulesFile",
+        "title": "Create Rules File",
+        "category": "Majestix"
+      },
+      {
+        "command": "majestix.runTodos",
+        "title": "Run Todo Items as Agent Tasks",
+        "category": "Majestix"
+      },
+      {
+        "command": "majestix.commitMessage",
+        "title": "Generate Commit Message",
+        "category": "Majestix"
+      },
+      {
+        "command": "majestix.prDescription",
+        "title": "Generate PR Description",
+        "category": "Majestix"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "majestix-sidebar",
+          "title": "Majestix AI",
+          "icon": "resources/icon.svg"
+        }
+      ],
+      "secondarySidebar": [
+        {
+          "id": "majestix-secondary",
+          "title": "Majestix AI",
+          "icon": "resources/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "majestix-sidebar": [
+        {
+          "type": "webview",
+          "id": "majestix.chatPanel",
+          "name": "Chat",
+          "retainContextWhenHidden": true
+        }
+      ],
+      "majestix-secondary": [
+        {
+          "type": "webview",
+          "id": "majestix.chatPanelSecondary",
+          "name": "Chat",
+          "retainContextWhenHidden": true
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "majestix.chatPanel",
+        "contents": "Welcome to Majestix AI!\n\nSet your API key to get started.\n[Set API Key](command:majestix.setApiKey)\n\nGet your API key from the [Majestix dashboard](https://inference-web2.web.app).",
+        "when": "!majestix.hasApiKey"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "majestix.explain",
+          "group": "majestix@1",
+          "when": "editorHasSelection"
+        },
+        {
+          "command": "majestix.refactor",
+          "group": "majestix@2",
+          "when": "editorHasSelection"
+        },
+        {
+          "command": "majestix.fix",
+          "group": "majestix@3",
+          "when": "editorHasSelection"
+        },
+        {
+          "command": "majestix.review",
+          "group": "majestix@4",
+          "when": "editorHasSelection"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "majestix.openInTab",
+          "group": "navigation",
+          "when": "true"
+        }
+      ],
+      "terminal/context": [
+        {
+          "command": "majestix.sendTerminal",
+          "group": "majestix@1",
+          "when": "terminalFocus"
+        }
+      ],
+      "terminal/title/context": [
+        {
+          "command": "majestix.sendTerminal",
+          "group": "majestix@1"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Majestix AI",
+      "properties": {
+        "majestix.apiUrl": {
+          "type": "string",
+          "default": "https://api.majestix.ai",
+          "scope": "machine",
+          "description": "Majestix platform API URL"
+        },
+        "majestix.defaultModel": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Default model key (empty = auto-route)"
+        },
+        "majestix.maxContextFiles": {
+          "type": "number",
+          "default": 5,
+          "scope": "machine",
+          "description": "Maximum number of context files to include with requests"
+        },
+        "majestix.telemetry.enabled": {
+          "type": "boolean",
+          "default": true,
+          "scope": "machine",
+          "description": "Enable local diagnostic telemetry in the 'Majestix AI Telemetry' output channel"
+        },
+        "majestix.sessionHistory.enabled": {
+          "type": "boolean",
+          "default": true,
+          "scope": "machine",
+          "description": "Save conversation history to disk for session persistence across restarts"
+        },
+        "majestix.defaultMode": {
+          "type": "string",
+          "default": "code",
+          "scope": "machine",
+          "enum": [
+            "code",
+            "architect",
+            "ask",
+            "askonwrite"
+          ],
+          "enumDescriptions": [
+            "Full coding agent: read, write, edit, run commands",
+            "Architecture and planning: read files + write .md planning docs only",
+            "Read-only Q&A: answers questions without modifying any files",
+            "Ask questions and make code edits in the same session"
+          ],
+          "description": "Default agent mode when starting a new chat"
+        },
+        "majestix.autoApprove": {
+          "type": "string",
+          "default": "none",
+          "scope": "machine",
+          "enum": [
+            "none",
+            "readOnly",
+            "all"
+          ],
+          "enumDescriptions": [
+            "Always ask for approval on write/edit/execute operations",
+            "Auto-approve read-only commands (ls, cat, git status, etc.) but ask for file writes and edits",
+            "Auto-approve all tool operations (use with caution)"
+          ],
+          "description": "Controls which tool operations are auto-approved without user confirmation"
+        },
+        "majestix.maxIterations": {
+          "type": "number",
+          "default": 50,
+          "minimum": 1,
+          "maximum": 100,
+          "scope": "machine",
+          "description": "Maximum number of agent loop iterations per task"
+        },
+        "majestix.commandTimeout": {
+          "type": "number",
+          "default": 60,
+          "minimum": 10,
+          "maximum": 600,
+          "scope": "machine",
+          "description": "Timeout in seconds for shell command execution"
+        },
+        "majestix.costWarningThreshold": {
+          "type": "number",
+          "default": 100,
+          "minimum": 0,
+          "scope": "machine",
+          "description": "Pause and warn when a single agent run exceeds this many credits (0 = disabled)"
+        },
+        "majestix.commandWhitelist": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "machine",
+          "description": "Optional command whitelist — when non-empty, only commands starting with these tokens are allowed (e.g. [\"git\", \"npm\", \"python\", \"node\", \"ls\", \"cat\"]). Empty = allow all."
+        },
+        "majestix.terminalMirror": {
+          "type": "boolean",
+          "default": false,
+          "scope": "machine",
+          "description": "Mirror command output to a real VSCode terminal panel for native scroll-back and selection"
+        }
+      }
+    },
+    "keybindings": [
+      {
+        "command": "majestix.ask",
+        "key": "ctrl+shift+i",
+        "mac": "cmd+shift+i"
+      },
+      {
+        "command": "majestix.explain",
+        "key": "ctrl+shift+e",
+        "mac": "cmd+shift+e",
+        "when": "editorHasSelection"
+      },
+      {
+        "command": "majestix.fix",
+        "key": "ctrl+shift+f",
+        "mac": "cmd+shift+f",
+        "when": "editorHasSelection"
+      },
+      {
+        "command": "majestix.review",
+        "key": "ctrl+shift+r",
+        "mac": "cmd+shift+r",
+        "when": "editorHasSelection"
+      },
+      {
+        "command": "majestix.sendTerminal",
+        "key": "ctrl+shift+t",
+        "mac": "cmd+shift+t",
+        "when": "terminalFocus"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "eslint . && tsc --noEmit && node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "package": "vsce package --no-dependencies",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/marked": "^5.0.2",
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.0.0",
+    "esbuild": "^0.24.0",
+    "eslint": "^10.0.2",
+    "eslint-plugin-import": "^2.32.0",
+    "eslint-plugin-jsdoc": "^62.8.0",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "eslint-plugin-react-refresh": "^0.5.2",
+    "globals": "^17.4.0",
+    "typescript": "^5.5.0",
+    "typescript-eslint": "^8.56.1"
+  },
+  "dependencies": {
+    "highlight.js": "^11.11.1",
+    "marked": "^17.0.4",
+    "marked-highlight": "^2.2.3",
+    "preact": "^10.29.0"
+  }
+}

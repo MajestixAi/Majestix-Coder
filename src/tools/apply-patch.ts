@@ -10,6 +10,7 @@ import * as vscode from "vscode";
 
 import { stashBackup } from "./file-backup";
 import { resolveWorkspacePath } from "../util/path-safety";
+import { collectPostWriteDiagnostics } from "./post-write-diagnostics";
 import type { ToolContext, ToolHandler, ToolResult } from "./types";
 
 // ── Patch format constants ──────────────────────────────────────────
@@ -363,7 +364,8 @@ export const applyPatchTool: ToolHandler = {
         try {
           await vscode.workspace.fs.writeFile(uri, new TextEncoder().encode(op.content ?? ""));
           const lineCount = (op.content ?? "").split("\n").length;
-          results.push(`${op.path}: created (${String(lineCount)} lines)`);
+          const diag = await collectPostWriteDiagnostics(uri);
+          results.push(`${op.path}: created (${String(lineCount)} lines)${diag}`);
           totalApplied++;
         } catch (e: unknown) {
           results.push(`${op.path}: create failed — ${e instanceof Error ? e.message : String(e)}`);
@@ -407,6 +409,9 @@ export const applyPatchTool: ToolHandler = {
 
       if (applied > 0) {
         await vscode.workspace.fs.writeFile(uri, new TextEncoder().encode(result));
+        // Check for LSP errors introduced by the patch
+        const diag = await collectPostWriteDiagnostics(uri);
+        if (diag) { results.push(diag); }
       }
 
       totalApplied += applied;

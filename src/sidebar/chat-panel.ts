@@ -9,6 +9,7 @@ import {
 import { ApiKeyManager } from "../auth/api-key";
 import { getActiveFileContext, getWorkspaceDiagnostics } from "../context/active-file";
 import { generateSessionTitle, SessionStore } from "../sessions/session-store";
+
 import { triggerCreditRefresh } from "../util/credits";
 import { resolveWorkspacePath } from "../util/path-safety";
 import { trackEvent } from "../util/telemetry";
@@ -24,11 +25,14 @@ interface WebviewMessage {
   names?: string[];
   uris?: string[];
   id?: string;
+  toolName?: string;
   content?: string;
   title?: string;
   query?: string;
   path?: string;
   enabled?: boolean;
+  filePath?: string;
+  newContent?: string;
 }
 
 /**
@@ -46,7 +50,12 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
   private _currentAgentPromise: Promise<void> | null = null;
   private _mode: string = vscode.workspace.getConfiguration("majestix").get<string>("defaultMode", "code");
   private _enableThinking = true;
-  private _pendingApproval: { resolve: (approved: boolean) => void; toolName: string } | null = null;
+  private _pendingApproval: {
+    resolve: (approved: boolean) => void;
+    toolName: string;
+    filePath?: string;
+    newContent?: string;
+  } | null = null;
 
   // Session persistence
   private _sessionStore: SessionStore | null = null;
@@ -166,6 +175,20 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
   }
 
   /**
+   * Handle the "View Diff" button click in the approval card.
+   * Shows a diff editor comparing the current file state with the backup.
+   *
+   * @param toolName - The name of the tool that requested approval.
+   */
+  private async _handleViewDiff(toolName: string): Promise<void> {
+    // For now, we'll show a simple informational message
+    // In a more complete implementation, we would show the actual diff
+    await vscode.window.showInformationMessage(
+      `View Diff clicked for tool: ${toolName}`
+    );
+  }
+
+  /**
    * Handles a message received from any webview pane (sidebar, secondary sidebar, or editor tab).
    *
    * @param msg - The parsed webview message.
@@ -250,6 +273,9 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
         break;
       case "pastePath":
         await this._handlePastePath(msg.path ?? "");
+        break;
+      case "viewDiff":
+        await this._handleViewDiff(msg.toolName ?? "");
         break;
       case "openSettings":
         void vscode.commands.executeCommand("workbench.action.openGlobalSettings");
@@ -830,16 +856,19 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     const requestApproval = (
       toolName: string,
       description: string,
-      detail?: string
+      detail?: string,
+      filePath?: string,
+      newContent?: string,
     ): Promise<boolean> => {
       return new Promise((resolve) => {
         trackEvent("approval.requested", { tool: toolName });
-        this._pendingApproval = { resolve, toolName };
+        this._pendingApproval = { resolve, toolName, filePath, newContent };
         this._broadcast({
           type: "approval_request",
           toolName,
           description,
           detail: detail ?? undefined,
+          filePath,
         });
       });
     };

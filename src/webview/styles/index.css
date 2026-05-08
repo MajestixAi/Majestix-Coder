@@ -246,6 +246,21 @@ body {
 .tool-body.collapsed { display: none; }
 .tool-result-copy-btn { display: block; margin-top: 6px; opacity: 0.5; }
 .approval-copy-btn { opacity: 0.6; margin-left: auto; }
+
+.approval-view-diff-btn {
+  margin-left: 8px;
+  padding: 4px 8px;
+  font-size: 12px;
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+  border: 1px solid var(--vscode-button-border, transparent);
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.approval-view-diff-btn:hover {
+  background: var(--vscode-button-secondaryHoverBackground);
+}
 .tool-card.error { border-color: var(--vscode-errorForeground); }
 .tool-card.error .tool-header { color: var(--vscode-errorForeground); }
 

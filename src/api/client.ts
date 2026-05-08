@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 
 import { ApiKeyManager } from "../auth/api-key";
+import { MAX_TRANSIENT_RETRIES } from "../constants";
 
 interface RateLimitBody {
   code?: string;
@@ -180,15 +181,20 @@ export class MajestixClient {
     if (apiKey === undefined || apiKey.length === 0) {throw new Error("No API key configured");}
 
     const url = `${this.getBaseUrl()}/code`;
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        "X-Api-Key": apiKey,
-        "Content-Type": "application/json",
+    const res = await fetchWithRetry(
+      url,
+      {
+        method: "POST",
+        headers: {
+          "X-Api-Key": apiKey,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ ...request, stream: true }),
+        signal,
       },
-      body: JSON.stringify({ ...request, stream: true }),
-      signal,
-    });
+      MAX_TRANSIENT_RETRIES,
+      signal
+    );
 
     if (!res.ok) {
       if (res.status === 402) {
@@ -338,6 +344,96 @@ function parseSseBuffer(buffer: string): { events: string[]; remaining: string }
   }
 
   return { events, remaining };
+}
+
+// ── Retry wrapper for initial API fetch ─────────────────────────────────
+
+/**
+ * HTTP status codes considered transient and worth retrying.
+ */
+const TRANSIENT_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504]);
+
+/**
+ * Attempt a fetch with exponential-backoff retry on transient errors.
+ *
+ * Retries up to `maxRetries` times when the server returns a 5xx or the
+ * network throws a connect / timeout error.  The delay doubles each time:
+ *   attempt 1 → baseDelay
+ *   attempt 2 → baseDelay × 2
+ *   attempt 3 → baseDelay × 4
+ *
+ * Respects the provided `signal` — aborts immediately if cancelled.
+ *
+ * @param url - The URL to fetch.
+ * @param options - Fetch options passed through on every attempt.
+ * @param maxRetries - Maximum number of retry attempts (not counting the first).
+ * @param signal - Optional AbortSignal to cancel retries.
+ * @returns The raw Response on success, or throws after all retries exhausted.
+ */
+async function fetchWithRetry(
+  url: string,
+  options: RequestInit,
+  maxRetries: number,
+  signal?: AbortSignal
+): Promise<Response> {
+  const BASE_DELAY_MS = 1_000;
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    // Respect abort signal before each attempt
+    if (signal?.aborted === true) {
+      throw new DOMException("Aborted", "AbortError");
+    }
+
+    try {
+      const res = await fetch(url, options);
+
+      // If response is not OK and the status is transient, retry
+      if (!res.ok && TRANSIENT_STATUS_CODES.has(res.status)) {
+        lastError = new Error(`HTTP ${String(res.status)}`);
+        if (attempt < maxRetries) {
+          const delay = BASE_DELAY_MS * (1 << attempt); // 1s, 2s, 4s…
+          await new Promise<void>((resolve) => {
+            const timer = setTimeout(resolve, delay);
+            signal?.addEventListener(
+              "abort",
+              () => {
+                clearTimeout(timer);
+                resolve();
+              },
+              { once: true }
+            );
+          });
+          continue;
+        }
+        // Max retries reached — fall through to throw below
+        throw new Error(`HTTP ${String(res.status)}: ${res.statusText}`);
+      }
+
+      // Non-transient error or success — return / throw immediately
+      return res;
+    } catch (err) {
+      // Network errors (ENOTFOUND, ECONNREFUSED, timeout, etc.) are transient
+      lastError = err;
+      if (attempt < maxRetries) {
+        const delay = BASE_DELAY_MS * (1 << attempt);
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, delay);
+          signal?.addEventListener(
+            "abort",
+            () => {
+              clearTimeout(timer);
+              resolve();
+            },
+            { once: true }
+          );
+        });
+        continue;
+      }
+    }
+  }
+
+  throw lastError;
 }
 
 // --- Types ---

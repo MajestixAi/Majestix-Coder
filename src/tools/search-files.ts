@@ -1,8 +1,7 @@
 import * as vscode from "vscode";
-import type { ToolHandler, ToolResult, ToolContext } from "./types";
 
-const MAX_RESULTS = 100;
-const MAX_FILE_SIZE = 500_000;
+import { MAX_SEARCH_FILE_SIZE, MAX_SEARCH_RESULTS } from "../constants";
+import type { ToolHandler, ToolResult, ToolContext } from "./types";
 
 export const searchFilesTool: ToolHandler = {
   definition: {
@@ -71,44 +70,55 @@ export const searchFilesTool: ToolHandler = {
       };
     }
 
-    const baseUri = searchPath.length > 0
+    // Build search scope URI from `path` parameter
+    const searchScopeUri = searchPath.length > 0
       ? vscode.Uri.joinPath(context.workspaceRoot, searchPath)
       : context.workspaceRoot;
-
-    // Use VS Code's findFiles to get matching files
-    const relativePattern = new vscode.RelativePattern(baseUri, includeGlob);
-    const files = await vscode.workspace.findFiles(
-      relativePattern,
-      "**/node_modules/**",
-      1000
-    );
 
     const results: string[] = [];
     let totalMatches = 0;
 
-    for (const fileUri of files) {
-      if (totalMatches >= MAX_RESULTS) {break;}
+    try {
+      const fileUris = await vscode.workspace.findFiles(
+        includeGlob,
+        "**/node_modules/**,**/bower_components/**",
+        MAX_SEARCH_RESULTS * 10
+      );
 
-      try {
-        const stat = await vscode.workspace.fs.stat(fileUri);
-        if (stat.size > MAX_FILE_SIZE) {continue;}
+      // Filter URIs to only those under the search scope
+      const scopePath = searchScopeUri.path.replace(/\\/g, "/");
+      const matchingUris = fileUris.filter(uri => {
+        const uriPath = uri.path.replace(/\\/g, "/");
+        return uriPath === scopePath || uriPath.startsWith(scopePath + "/");
+      });
 
-        const bytes = await vscode.workspace.fs.readFile(fileUri);
-        const text = new TextDecoder().decode(bytes);
-        const lines = text.split("\n");
-        const relPath = vscode.workspace.asRelativePath(fileUri);
+      for (const fileUri of matchingUris) {
+        if (totalMatches >= MAX_SEARCH_RESULTS) { break; }
 
-        for (let i = 0; i < lines.length; i++) {
-          if (totalMatches >= MAX_RESULTS) {break;}
-          regex.lastIndex = 0;
-          if (regex.test(lines[i])) {
-            results.push(`${relPath}:${String(i + 1)}: ${lines[i].trimEnd()}`);
-            totalMatches++;
+        try {
+          const bytes = await vscode.workspace.fs.readFile(fileUri);
+          if (bytes.length > MAX_SEARCH_FILE_SIZE) { continue; }
+          const text = new TextDecoder().decode(bytes);
+          const lines = text.split("\n");
+
+          for (let i = 0; i < lines.length && totalMatches < MAX_SEARCH_RESULTS; i++) {
+            regex.lastIndex = 0;
+            if (regex.test(lines[i])) {
+              const relPath = vscode.workspace.asRelativePath(fileUri);
+              results.push(`${relPath}:${String(i + 1)}: ${lines[i].trimEnd()}`);
+              totalMatches++;
+            }
           }
+        } catch {
+          // skip unreadable files
         }
-      } catch {
-        // skip unreadable files
       }
+    } catch (err: unknown) {
+      return {
+        tool_use_id: "",
+        content: `Search failed: ${err instanceof Error ? err.message : String(err)}`,
+        is_error: true,
+      };
     }
 
     if (results.length === 0) {
@@ -119,8 +129,8 @@ export const searchFilesTool: ToolHandler = {
     }
 
     const truncated =
-      totalMatches >= MAX_RESULTS
-        ? `\n(showing first ${String(MAX_RESULTS)} matches)`
+      totalMatches >= MAX_SEARCH_RESULTS
+        ? `\n(showing first ${String(MAX_SEARCH_RESULTS)} matches)`
         : "";
     return {
       tool_use_id: "",

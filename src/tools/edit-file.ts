@@ -10,8 +10,9 @@ import {
   restoreLineEndings,
   stripLineNumberPrefixes,
 } from "./diff-match";
-import { stashBackup } from "./file-backup";
+import { revertFile, stashBackup } from "./file-backup";
 import { resolveWorkspacePath } from "../util/path-safety";
+import { collectPostWriteDiagnostics } from "./post-write-diagnostics";
 import type {
   ToolContext,
   ToolHandler,
@@ -107,9 +108,7 @@ export const editFileTool: ToolHandler = {
     const originalLineEnding = detectLineEnding(rawContent);
     const content = normalizeLineEndings(rawContent);
 
-    // Stash backup before modifying
-    await stashBackup(uri);
-
+    // Apply all edits in-memory first (atomic: backup only after success)
     let modified = content;
     const applied: string[] = [];
     const failed: string[] = [];
@@ -137,9 +136,21 @@ export const editFileTool: ToolHandler = {
       };
     }
 
+    // Now stash backup and write — only after edits are confirmed applied in-memory
+    await stashBackup(uri);
+
     // Restore original line endings and write
     const finalContent = restoreLineEndings(modified, originalLineEnding);
-    await vscode.workspace.fs.writeFile(uri, new TextEncoder().encode(finalContent));
+    try {
+      await vscode.workspace.fs.writeFile(uri, new TextEncoder().encode(finalContent));
+    } catch {
+      // Write failed — revert to the backed-up content
+      await revertFile(uri).catch(() => {/* ignore revert failures */});
+      throw new Error("Failed to write file to disk");
+    }
+
+    // Check for LSP errors introduced by the edits
+    const diagnosticFeedback = await collectPostWriteDiagnostics(uri);
 
     const summary = [...applied, ...failed].join("\n");
     const partialWarning = failed.length > 0
@@ -147,7 +158,7 @@ export const editFileTool: ToolHandler = {
       : "";
     return {
       tool_use_id: "",
-      content: `Edited ${filePath}: ${String(applied.length)}/${String(edits.length)} edits applied\n${summary}${partialWarning}`,
+      content: `Edited ${filePath}: ${String(applied.length)}/${String(edits.length)} edits applied\n${summary}${partialWarning}${diagnosticFeedback}`,
       is_error: failed.length > 0 && applied.length === 0,
     };
   },

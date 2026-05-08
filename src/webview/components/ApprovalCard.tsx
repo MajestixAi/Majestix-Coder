@@ -60,10 +60,18 @@ export function ApprovalCard({ approval, dispatch }: Props) {
       </div>
       <div class="approval-bar">
         <button class="btn-approve" onClick={() => { handleApproval(true); }}>Allow</button>
-        <button class="btn-allow-all" onClick={handleAllowAll}>{"\u2705"} Allow All (10 min)</button>
+        <button class="btn-allow-all" onClick={handleAllowAll}>{"✅"} Allow All (10 min)</button>
         <button class="btn-reject" onClick={() => { handleApproval(false); }}>Reject</button>
         {approval.detail && (
-          <CopyButton getText={() => approval.detail ?? ""} className="approval-copy-btn" />
+          <>
+            <button
+              class="approval-view-diff-btn"
+              onClick={() => {
+                postMessage({ type: "viewDiff", toolName: approval.toolName });
+              }}
+            >{"🔍"} View Diff</button>
+            <CopyButton getText={() => approval.detail ?? ""} className="approval-copy-btn" />
+          </>
         )}
       </div>
     </div>

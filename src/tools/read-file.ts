@@ -1,13 +1,12 @@
 import * as vscode from "vscode";
 
 import { resolveWorkspacePath } from "../util/path-safety";
+import { MAX_FILE_SIZE } from "../constants";
 import type {
   ToolContext,
   ToolHandler,
   ToolResult,
 } from "./types";
-
-const MAX_FILE_SIZE = 100_000;
 
 export const readFileTool: ToolHandler = {
   definition: {
@@ -69,7 +68,7 @@ export const readFileTool: ToolHandler = {
       if (stat.size > MAX_FILE_SIZE && startLine === undefined) {
         return {
           tool_use_id: "",
-          content: `File is too large (${String(stat.size)} bytes). Use start_line/end_line to read a section, or use search_files to find specific content.`,
+          content: `File is too large (${String(stat.size)} bytes, limit ${String(MAX_FILE_SIZE)}). Use start_line/end_line to read a section, or use search_files to find specific content.`,
           is_error: true,
         };
       }

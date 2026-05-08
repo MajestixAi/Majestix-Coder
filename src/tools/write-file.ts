@@ -1,16 +1,15 @@
 import * as vscode from "vscode";
 
+import { MAX_WRITE_SIZE } from "../constants";
 import { stashBackup } from "./file-backup";
 import { detectLineEnding, restoreLineEndings } from "./diff-match";
 import { resolveWorkspacePath } from "../util/path-safety";
+import { collectPostWriteDiagnostics } from "./post-write-diagnostics";
 import type {
   ToolContext,
   ToolHandler,
   ToolResult,
 } from "./types";
-
-/** Delay after write to let VSCode language server report diagnostics. */
-const POST_WRITE_DIAGNOSTIC_DELAY_MS = 300;
 
 export const writeToFileTool: ToolHandler = {
   definition: {
@@ -66,6 +65,15 @@ export const writeToFileTool: ToolHandler = {
       isNew = true;
     }
 
+    // Safety: reject content that exceeds MAX_WRITE_SIZE to prevent runaway writes
+    if (newContent.length > MAX_WRITE_SIZE) {
+      return {
+        tool_use_id: "",
+        content: `Content too large (${String(newContent.length)} bytes, limit ${String(MAX_WRITE_SIZE)}). Please split into smaller files or use edit_file for targeted changes.`,
+        is_error: true,
+      };
+    }
+
     // Stash backup before modifying (for rollback capability)
     await stashBackup(uri);
 
@@ -84,7 +92,7 @@ export const writeToFileTool: ToolHandler = {
     await vscode.workspace.fs.writeFile(uri, new TextEncoder().encode(finalContent));
 
     // Wait briefly for VSCode diagnostics to catch up, then collect any new errors
-    const diagnosticFeedback = await collectPostWriteDiagnostics(uri, POST_WRITE_DIAGNOSTIC_DELAY_MS);
+    const diagnosticFeedback = await collectPostWriteDiagnostics(uri);
 
     // Build result summary
     if (isNew) {
@@ -107,54 +115,4 @@ export const writeToFileTool: ToolHandler = {
   },
 };
 
-// ---------------------------------------------------------------------------
-// Post-write diagnostics collection
-// ---------------------------------------------------------------------------
 
-/**
- * Wait for VSCode's language server to report diagnostics on the file,
- * then return a summary of any errors/warnings introduced.
- * This gives the agent immediate feedback if a write introduced type errors, etc.
- *
- * @param uri - The VSCode URI of the file to check diagnostics for.
- * @param delayMs - Milliseconds to wait before checking diagnostics.
- * @returns A formatted string with diagnostic errors/warnings, or empty string.
- */
-async function collectPostWriteDiagnostics(
-  uri: vscode.Uri,
-  delayMs: number
-): Promise<string> {
-  await new Promise(resolve => setTimeout(resolve, delayMs));
-
-  const diagnostics = vscode.languages.getDiagnostics(uri);
-  if (diagnostics.length === 0) { return ""; }
-
-  const errors = diagnostics.filter(d => d.severity === vscode.DiagnosticSeverity.Error);
-  const warnings = diagnostics.filter(d => d.severity === vscode.DiagnosticSeverity.Warning);
-
-  if (errors.length === 0 && warnings.length === 0) { return ""; }
-
-  const parts: string[] = ["\n\n📋 Post-write diagnostics:"];
-
-  // Show up to 5 errors
-  for (const err of errors.slice(0, 5)) {
-    parts.push(`  ERROR line ${String(err.range.start.line + 1)}: ${err.message}`);
-  }
-  if (errors.length > 5) {
-    parts.push(`  ... and ${String(errors.length - 5)} more error(s)`);
-  }
-
-  // Show up to 3 warnings
-  for (const warn of warnings.slice(0, 3)) {
-    parts.push(`  WARN line ${String(warn.range.start.line + 1)}: ${warn.message}`);
-  }
-  if (warnings.length > 3) {
-    parts.push(`  ... and ${String(warnings.length - 3)} more warning(s)`);
-  }
-
-  if (errors.length > 0) {
-    parts.push("\n⚠️ Fix the errors above before proceeding.");
-  }
-
-  return parts.join("\n");
-}

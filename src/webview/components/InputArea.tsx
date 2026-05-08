@@ -75,7 +75,12 @@ export function InputArea({
 
   const handleSend = useCallback(() => {
     const text = inputValue.trim();
-    if (!text || isStreaming) return;
+    if (!text) return;
+    // Allow sending while streaming — the extension will abort the current
+    // run and start the new message. The Stop button still works too.
+    if (isStreaming) {
+      postMessage({ type: "stop" });
+    }
 
     // Slash commands
     const parts = text.split(/\s+/);
@@ -128,7 +133,7 @@ export function InputArea({
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      if (!isStreaming) handleSend();
+      handleSend();
     }
     if (e.key === "Escape" && isStreaming) {
       e.preventDefault();

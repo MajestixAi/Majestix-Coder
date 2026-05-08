@@ -5,3 +5,4 @@ dist/
 tmp/
 .env
 .DS_Store
+.majestix/

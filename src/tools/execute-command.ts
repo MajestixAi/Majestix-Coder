@@ -11,6 +11,7 @@ import type {
 } from "./types";
 
 const MAX_OUTPUT = 10_000;
+const ABORT_GRACE_MS = 1_000;
 
 // ---------------------------------------------------------------------------
 // Hot-process detection — compilation-like processes get extended timeouts
@@ -117,296 +118,310 @@ const circuitBreaker = {
 // Destructive file operations (rm, chmod, chown) are NOT blocked here —
 // they're path-gated below to ensure they stay inside the workspace.
 const CRITICAL_BLOCK_PATTERNS: { label: string; pattern: RegExp }[] = [
-  { label: "fork_bomb", pattern: /:\(\)\{\s*:\|:\s*&\s*\};:/ },
-  { label: "filesystem_format", pattern: /\bmkfs(?:\.[a-z0-9]+)?\b/i },
-  { label: "system_shutdown", pattern: /\b(?:poweroff|reboot|shutdown)\b/i },
-  {
-    label: "raw_disk_write",
-    pattern: /\bdd\b[^\n]*\bof\s*=\s*\/dev\/(?:sd[a-z]+\d*|nvme\d+n\d+(?:p\d+)?|disk\d+s\d+)/i,
-  },
-  { label: "curl_pipe_to_shell", pattern: /\bcurl\b[^\n]*\|\s*(?:ba?sh|sh|zsh)\b/i },
-  { label: "wget_pipe_to_shell", pattern: /\bwget\b[^\n]*-O\s*-[^\n]*\|\s*(?:ba?sh|sh|zsh)\b/i },
-  { label: "python_exec_pipe", pattern: /\bcurl\b[^\n]*\|\s*python/i },
-  { label: "iptables_flush", pattern: /\biptables\s+-F\b/i },
+  // privilege / system takeover
+  { label: "privilege escalation", pattern: /\bsudo\b/ },
+  { label: "privilege escalation", pattern: /\bsu\s+-/ },
+  { label: "windows admin elevation", pattern: /Start-Process\s+.*-Verb\s+runAs/i },
+
+  // disk / filesystem destructive outside normal coding
+  { label: "disk formatting", pattern: /\bmkfs\b|\bformat\s+[A-Z]:/i },
+  { label: "disk overwrite", pattern: /\bdd\s+.*\bof=\/dev\// },
+  { label: "disk partitioning", pattern: /\b(fdisk|parted|diskutil)\b/i },
+
+  // fork bombs / shutdowns
+  { label: "fork bomb", pattern: /:\s*\(\s*\)\s*\{\s*:\s*\|\s*:/ },
+  { label: "shutdown/reboot", pattern: /\b(shutdown|reboot|halt|poweroff)\b/i },
+
+  // exfiltration / network shells
+  { label: "reverse shell", pattern: /\bnc\b.*\s-e\s+\/bin\//i },
+  { label: "reverse shell", pattern: /bash\s+-i\s+>&\s*\/dev\/tcp/i },
+  { label: "secret exfiltration", pattern: /\b(curl|wget)\b.*\$\(\s*(cat|grep).*\.(env|pem|key|aws|credentials)/i },
+
+  // crypto miners / known abuse
+  { label: "crypto miner", pattern: /\b(xmrig|minerd|cpuminer)\b/i },
 ];
 
+// Patterns that are allowed only if every path argument is inside workspace.
+const PATH_GATED_DESTRUCTIVE = /\b(rm|mv|chmod|chown|truncate|shred)\b/i;
+
 // ---------------------------------------------------------------------------
-// Workspace path gating — destructive commands must target the workspace
+// Command output rewriting — prevent runaway output
 // ---------------------------------------------------------------------------
 
-// Commands that modify/delete files — their path arguments must resolve inside cwd.
-const PATH_GATED_COMMANDS = /\b(?:rm|rmdir|chmod|chown|mv)\b/;
+/** Commands likely to dump huge output if unbounded. */
+const HIGH_OUTPUT_PATTERNS: { pattern: RegExp; rewrite: (cmd: string) => string }[] = [
+  // grep -R / rg without max-count
+  {
+    pattern: /^\s*grep\s+(-[A-Za-z]*R[A-Za-z]*|-r)\b(?!.*\|\s*head)/,
+    rewrite: (cmd) => `${cmd} | head -200`,
+  },
+  {
+    pattern: /^\s*rg\b(?!.*(--max-count|-m)\b)(?!.*\|\s*head)/,
+    rewrite: (cmd) => `${cmd} --max-count 200`,
+  },
+  // find without maxdepth or head
+  {
+    pattern: /^\s*find\s+\S+(?!.*-maxdepth)(?!.*\|\s*head)/,
+    rewrite: (cmd) => `${cmd} | head -500`,
+  },
+  // cat huge-ish glob/recursive patterns
+  {
+    pattern: /^\s*cat\s+.*(\*|\.log|node_modules|dist|build)(?!.*\|\s*head)/,
+    rewrite: (cmd) => `${cmd} | head -500`,
+  },
+];
 
 /**
- * Extracts path-like arguments from a command string (after flags).
- * Returns tokens that look like file/directory paths, skipping flags.
+ * Rewrites commands that are likely to produce massive output by adding simple limits.
  *
- * @param command - The shell command string.
- * @returns Array of path-like tokens from the command.
- */
-function extractPathArgs(command: string): string[] {
-  // Split on pipes/semicolons — only check the first command in a chain
-  const firstCmd = command.split(/[|;&]/)[0];
-  const tokens = firstCmd.trim().split(/\s+/);
-  const paths: string[] = [];
-  for (let i = 1; i < tokens.length; i++) {
-    const t = tokens[i];
-    // Skip flags (anything starting with -)
-    if (t.startsWith("-")) { continue; }
-    // Skip common non-path args
-    if (/^\d+$/.test(t)) { continue; }
-    paths.push(t);
-  }
-  return paths;
-}
-
-/**
- * Checks that all path arguments in a destructive command resolve inside
- * the given cwd (workspace root). Returns an error string if any path
- * escapes, or null if all paths are safe.
- *
- * @param command - The shell command string to validate.
- * @param cwd - The working directory (workspace root) that paths must stay within.
- * @returns Error message if a path escapes the workspace, or null if safe.
- */
-function checkPathEscapes(command: string, cwd: string): string | null {
-  if (!PATH_GATED_COMMANDS.test(command)) { return null; }
-
-  const pathArgs = extractPathArgs(command);
-  for (const p of pathArgs) {
-    const resolved = path.resolve(cwd, p);
-    // Must be inside cwd — resolved path must start with cwd + separator (or equal cwd)
-    if (resolved !== cwd && !resolved.startsWith(cwd + path.sep)) {
-      return `Path "${p}" resolves to "${resolved}" which is outside the workspace (${cwd}). Destructive commands must target files within the workspace.`;
-    }
-  }
-  return null;
-}
-
-// ---------------------------------------------------------------------------
-// Output flood prevention — rewrite commands likely to produce massive output
-// ---------------------------------------------------------------------------
-
-/**
- * Rewrites commands that are likely to produce unbounded output by appending
- * limits. Does not block — just makes the command safer. Returns the original
- * command if no rewrite is needed.
- *
- * @param command - The shell command string to inspect and potentially rewrite.
- * @returns The (possibly rewritten) command string.
+ * @param command - The original shell command.
+ * @returns The rewritten command, or the original if no rewrite is needed.
  */
 function rewriteForOutputSafety(command: string): string {
-  let cmd = command;
-
-  // grep/rg without -l, -c, or head/tail pipe and without an explicit limit
-  // → append | head -500 to cap line output
-  if (/\b(?:grep|rg|ack|ag)\b/.test(cmd) &&
-      !/\s-[lc]\b/.test(cmd) &&
-      !/\|\s*(?:head|tail|wc)\b/.test(cmd) &&
-      !cmd.includes("--max-count")) {
-    cmd = cmd + " | head -500";
+  // Don't rewrite if user already pipes/redirects in a way that limits output.
+  if (/\b(head|tail|less|more|sed\s+-n|awk\s+.*NR\s*[<]=)\b/.test(command)) {
+    return command;
   }
 
-  // find without -maxdepth or pipe → append | head -500
-  if (/\bfind\b/.test(cmd) &&
-      !cmd.includes("-maxdepth") &&
-      !/\|\s*(?:head|tail|wc)\b/.test(cmd)) {
-    cmd = cmd + " | head -500";
-  }
-
-  // cat/less/more of a file without head/tail → use head -1000
-  if (/^\s*(?:cat|less|more)\s+/.test(cmd) &&
-      !/\|\s*(?:head|tail|grep)\b/.test(cmd)) {
-    cmd = cmd.replace(/^\s*(?:cat|less|more)\s+/, "head -1000 ");
-  }
-
-  return cmd;
-}
-
-// ---------------------------------------------------------------------------
-// Command whitelist (optional — from settings)
-// ---------------------------------------------------------------------------
-
-/**
- * Reads the optional command whitelist from workspace settings.
- * When set and non-empty, only commands whose first token matches are allowed.
- *
- * @returns An array of allowed command prefixes, or empty if whitelist is disabled.
- */
-function getCommandWhitelist(): string[] {
-  return vscode.workspace
-    .getConfiguration("majestix")
-    .get<string[]>("commandWhitelist", []);
-}
-
-/**
- * Checks a command against the optional whitelist.
- *
- * @param command - The shell command string to validate.
- * @returns An error message if rejected, or null if allowed.
- */
-function checkWhitelist(command: string): string | null {
-  const whitelist = getCommandWhitelist();
-  if (whitelist.length === 0) { return null; } // whitelist disabled
-
-  // Extract the first token (the executable) from the command
-  const trimmed = command.trim();
-  const firstToken = trimmed.split(/\s+/)[0].replace(/^(?:sudo|env)\s+/, "");
-
-  for (const allowed of whitelist) {
-    if (firstToken === allowed || trimmed.startsWith(allowed)) {
-      return null; // allowed
+  for (const { pattern, rewrite } of HIGH_OUTPUT_PATTERNS) {
+    if (pattern.test(command)) {
+      return rewrite(command);
     }
   }
-
-  return `Command "${firstToken}" is not in the allowed command list. Allowed: ${whitelist.join(", ")}`;
+  return command;
 }
 
 // ---------------------------------------------------------------------------
-// Configuration helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Reads the configured command timeout from workspace settings.
- *
- * @returns The timeout duration in milliseconds.
- */
-function getTimeoutMs(): number {
-  const seconds = vscode.workspace.getConfiguration("majestix").get<number>("commandTimeout", 10);
-  return seconds * 1000;
-}
-
-/**
- * Checks whether terminal mirroring is enabled in workspace settings.
- *
- * @returns True if terminal mirroring is enabled.
- */
-function isTerminalMirrorEnabled(): boolean {
-  return vscode.workspace
-    .getConfiguration("majestix")
-    .get<boolean>("terminalMirror", false);
-}
-
-// ---------------------------------------------------------------------------
-// Terminal mirroring — optionally show output in a real VSCode terminal panel
+// Terminal mirroring
 // ---------------------------------------------------------------------------
 
 let mirrorTerminal: vscode.Terminal | undefined;
-const mirrorWriteEmitter = new vscode.EventEmitter<string>();
+const mirrorWriteEmitter: vscode.EventEmitter<string> = new vscode.EventEmitter<string>();
 
 /**
- * Gets or creates the pseudoterminal used for output mirroring.
+ * Ensure a VSCode terminal exists for mirroring command output.
+ * Uses a pseudoterminal so we can write streaming output directly.
  *
- * @returns The VSCode terminal instance for mirroring command output.
+ * @returns The terminal used for mirrored command output.
  */
-function getMirrorTerminal(): vscode.Terminal {
-  if (mirrorTerminal !== undefined && mirrorTerminal.exitStatus === undefined) {
+function ensureMirrorTerminal(): vscode.Terminal {
+  if (mirrorTerminal !== undefined) {
     return mirrorTerminal;
   }
 
   const pty: vscode.Pseudoterminal = {
     onDidWrite: mirrorWriteEmitter.event,
     open: () => {
-      mirrorWriteEmitter.fire("Majestix AI — Command Output Mirror\r\n\r\n");
+      mirrorWriteEmitter.fire("\x1b[36mMajestix Command Output\x1b[0m\r\n");
     },
-    close: () => {
-      mirrorTerminal = undefined;
-    },
+    close: () => { /* no-op */ },
   };
 
-  mirrorTerminal = vscode.window.createTerminal({
-    name: "Majestix Command Mirror",
-    pty,
-  });
+  mirrorTerminal = vscode.window.createTerminal({ name: "Majestix Command Output", pty });
   return mirrorTerminal;
 }
 
 /**
- * Push text to the mirror terminal (converting LF to CRLF for terminal display).
+ * Writes text to the mirror terminal if enabled.
  *
- * @param text - The text to display in the mirror terminal.
+ * @param text - Text to write.
  */
 function mirrorOutput(text: string): void {
-  if (!isTerminalMirrorEnabled()) { return; }
-  const terminal = getMirrorTerminal();
-  terminal.show(true); // preserve focus
+  const enabled = getMirrorEnabled();
+  if (!enabled) { return; }
+  const term = ensureMirrorTerminal();
+  term.show(true);
+  // Normalize LF to CRLF for terminal rendering
   mirrorWriteEmitter.fire(text.replace(/\n/g, "\r\n"));
 }
 
+/**
+ * Returns the configured command timeout in milliseconds.
+ *
+ * @returns Command timeout in milliseconds.
+ */
+function getTimeoutMs(): number {
+  const seconds = vscode.workspace.getConfiguration("majestix").get<number>("commandTimeout", 60);
+  return seconds * 1000;
+}
+
+/**
+ * Sleeps for the requested duration, but resolves early if the agent is aborted.
+ *
+ * @param ms - Delay in milliseconds.
+ * @param signal - Abort signal from the active agent run.
+ * @returns A promise that resolves after the delay or when aborted.
+ */
+function sleepAbortable(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal.aborted) { resolve(); return; }
+    const timer = setTimeout(resolve, ms);
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      resolve();
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+/**
+ * Terminate a spawned command. On POSIX, commands are launched as their own
+ * process group so killing `-pid` also terminates children started by the shell
+ * (npm/node/test watchers/etc.), which prevents the Stop button from hanging.
+ *
+ * @param proc - The spawned child process.
+ * @param signal - Signal to send.
+ */
+function killCommandProcess(proc: ReturnType<typeof spawn>, signal: NodeJS.Signals): void {
+  if (proc.pid === undefined) { return; }
+  try {
+    if (process.platform !== "win32") {
+      process.kill(-proc.pid, signal);
+    } else {
+      proc.kill(signal);
+    }
+  } catch {
+    try { proc.kill(signal); } catch { /* process already exited */ }
+  }
+}
+
+/**
+ * Checks whether terminal mirroring is enabled in workspace settings.
+ *
+ * @returns True if command output should be mirrored to a terminal.
+ */
+function getMirrorEnabled(): boolean {
+  return vscode.workspace.getConfiguration("majestix").get<boolean>("terminalMirror", false);
+}
+
 // ---------------------------------------------------------------------------
-// Tool handler
+// Whitelist enforcement
+// ---------------------------------------------------------------------------
+
+/**
+ * Checks optional command whitelist setting.
+ * If whitelist is non-empty, command must start with one of the allowed tokens.
+ *
+ * @param command - The command to check.
+ * @returns Error message if blocked, otherwise null.
+ */
+function checkWhitelist(command: string): string | null {
+  const whitelist = vscode.workspace.getConfiguration("majestix").get<string[]>("commandWhitelist", []);
+  if (whitelist.length === 0) { return null; }
+
+  const trimmed = command.trim();
+  const allowed = whitelist.some((token) => trimmed.startsWith(token));
+  if (!allowed) {
+    return `Command blocked by whitelist. Allowed prefixes: ${whitelist.join(", ")}`;
+  }
+  return null;
+}
+
+/**
+ * Checks path-gated destructive commands to ensure they only target workspace paths.
+ *
+ * @param command - The shell command string.
+ * @param workspaceRoot - The workspace root URI.
+ * @returns Error message if unsafe, otherwise null.
+ */
+function checkPathGatedDestructive(command: string, workspaceRoot: vscode.Uri): string | null {
+  if (!PATH_GATED_DESTRUCTIVE.test(command)) { return null; }
+
+  // Extract simple path-like tokens after destructive commands.
+  // This is intentionally conservative; if we can't reason about it, require manual review.
+  const tokens = command.split(/\s+/).filter((t) => t.length > 0);
+  const destructiveIndex = tokens.findIndex((t) => /^(rm|mv|chmod|chown|truncate|shred)$/.test(t));
+  if (destructiveIndex === -1) { return null; }
+
+  const pathTokens = tokens.slice(destructiveIndex + 1)
+    .filter((t) => !t.startsWith("-") && !/^[0-7]{3,4}$/.test(t));
+
+  for (const token of pathTokens) {
+    // Skip shell operators and obvious non-paths
+    if (/^(\||&&|\|\||;|>|<|2>|&>)$/.test(token)) { continue; }
+    if (token.includes("$") || token.includes("`")) {
+      return "Destructive command blocked: dynamic shell expansion in path is not allowed.";
+    }
+
+    try {
+      const unquoted = token.replace(/^['"]|['"]$/g, "");
+      const resolved = path.isAbsolute(unquoted)
+        ? vscode.Uri.file(unquoted)
+        : resolveWorkspacePath(workspaceRoot, unquoted);
+
+      if (!resolved.fsPath.startsWith(workspaceRoot.fsPath)) {
+        return `Destructive command blocked: path outside workspace (${unquoted})`;
+      }
+    } catch {
+      return `Destructive command blocked: unsafe path (${token})`;
+    }
+  }
+
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Tool implementation
 // ---------------------------------------------------------------------------
 
 export const executeCommandTool: ToolHandler = {
   definition: {
     name: "execute_command",
     description:
-      "Execute a shell command in the workspace. Returns stdout, stderr, and exit code. " +
-      "Use this for running tests, installing dependencies, git operations, etc. " +
-      "Commands run in the workspace root by default. " +
-      "Run commands one at a time and wait for output before running the next. " +
-      "Never use terminal commands to edit files — use edit_file or write_to_file instead.",
+      "Execute a shell command in the workspace. Requires user approval unless auto-approved by settings.",
     input_schema: {
       type: "object",
       properties: {
-        command: {
-          type: "string",
-          description: "The shell command to execute",
-        },
-        description: {
-          type: "string",
-          description: "Brief explanation of what this command does and why (shown to user in approval prompt)",
-        },
-        cwd: {
-          type: "string",
-          description:
-            "Working directory relative to workspace root. Defaults to workspace root.",
-        },
+        command: { type: "string", description: "The shell command to execute" },
+        cwd: { type: "string", description: "Working directory relative to workspace root (optional)" },
       },
       required: ["command"],
     },
   },
-
   requiresApproval: () => true,
+  async execute(input: Record<string, unknown>, context: ToolContext): Promise<ToolResult> {
+    const command = typeof input.command === "string" ? input.command.trim() : "";
+    if (command.length === 0) {
+      return { tool_use_id: "", content: "Error: command is required", is_error: true };
+    }
 
-  async execute(
-    input: Record<string, unknown>,
-    context: ToolContext
-  ): Promise<ToolResult> {
-    const command = input.command as string;
-    const cwdRel = input.cwd as string | undefined;
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    if (workspaceFolders === undefined || workspaceFolders.length === 0) {
+      return { tool_use_id: "", content: "Error: no workspace folder open", is_error: true };
+    }
 
-    let cwd = context.workspaceRoot.fsPath;
-    if (cwdRel !== undefined && cwdRel.length > 0) {
+    const workspaceRoot = workspaceFolders[0].uri;
+    let cwd = workspaceRoot.fsPath;
+    if (typeof input.cwd === "string" && input.cwd.length > 0) {
       try {
-        cwd = resolveWorkspacePath(context.workspaceRoot, cwdRel).fsPath;
+        cwd = resolveWorkspacePath(workspaceRoot, input.cwd).fsPath;
       } catch (e: unknown) {
         return {
           tool_use_id: "",
-          content: `Invalid cwd: ${e instanceof Error ? e.message : String(e)}`,
+          content: `Error: invalid cwd: ${e instanceof Error ? e.message : String(e)}`,
           is_error: true,
         };
       }
     }
 
-    // --- Safety: block dangerous commands ---
+    // --- Safety: critical blocklist ---
     const blocked = getBlockedCommand(command);
     if (blocked !== null) {
-      trackEvent("command.blocked", { reason: blocked.label });
+      trackEvent("command.blocked", { reason: blocked.label, command: command.slice(0, 100) });
       return {
         tool_use_id: "",
-        content: `Command blocked: ${blocked.label} — contains a critically dangerous operation`,
+        content: `Command blocked for safety: ${blocked.label}.`,
         is_error: true,
       };
     }
 
-    // --- Safety: workspace path gate for destructive commands ---
-    const pathError = checkPathEscapes(command, cwd);
-    if (pathError !== null) {
-      trackEvent("command.path_escape", { command: command.slice(0, 100) });
+    // --- Safety: path-gated destructive commands ---
+    const pathGateError = checkPathGatedDestructive(command, workspaceRoot);
+    if (pathGateError !== null) {
+      trackEvent("command.blocked", { reason: "path_gate", command: command.slice(0, 100) });
       return {
         tool_use_id: "",
-        content: pathError,
+        content: pathGateError,
         is_error: true,
       };
     }
@@ -441,7 +456,14 @@ export const executeCommandTool: ToolHandler = {
       const idx = Math.min(recentFailures - 1, BACKOFF_SCHEDULE_MS.length - 1);
       const delay = BACKOFF_SCHEDULE_MS[idx];
       trackEvent("command.backoff", { delayMs: delay, failures: recentFailures });
-      await new Promise((resolve) => setTimeout(resolve, delay));
+      await sleepAbortable(delay, context.signal);
+      if (context.signal.aborted) {
+        return {
+          tool_use_id: "",
+          content: "Command cancelled before execution.",
+          is_error: true,
+        };
+      }
     }
 
     // --- Safety: rewrite commands likely to produce massive output ---
@@ -536,6 +558,8 @@ function runCommandStreaming(
     let isHot = false;
     let exitCode: number | null = null;
     let finished = false;
+    let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
+    let killTimer: ReturnType<typeof setTimeout> | undefined;
 
     const shell = process.platform === "win32" ? "cmd.exe" : "/bin/sh";
     const shellArgs = process.platform === "win32" ? ["/c", command] : ["-c", command];
@@ -544,19 +568,26 @@ function runCommandStreaming(
       cwd,
       env: { ...process.env, TERM: "dumb", NO_COLOR: "1" },
       stdio: ["ignore", "pipe", "pipe"],
+      detached: process.platform !== "win32",
     });
 
-    // Hard timeout — configurable, extended for hot processes
     let effectiveTimeoutMs = timeoutMs;
-    const hardTimer = setTimeout(() => {
-      if (!finished) {
-        proc.kill("SIGKILL");
-        finish(null, "timeout");
-      }
-    }, timeoutMs);
-
-    // Grace timer for hot processes — extends the hard timeout once
     let hotExtended = false;
+
+    const scheduleTimeout = (): void => {
+      if (timeoutTimer !== undefined) { clearTimeout(timeoutTimer); }
+      timeoutTimer = setTimeout(() => {
+        if (!finished) {
+          killCommandProcess(proc, "SIGTERM");
+          killTimer = setTimeout(() => {
+            killCommandProcess(proc, "SIGKILL");
+          }, ABORT_GRACE_MS);
+          finish(null, "timeout");
+        }
+      }, effectiveTimeoutMs);
+    };
+
+    scheduleTimeout();
 
     /**
      * Process a chunk of output from stdout or stderr.
@@ -565,40 +596,34 @@ function runCommandStreaming(
      * @param stream - Which stream produced this chunk.
      */
     function handleChunk(data: Buffer, stream: "stdout" | "stderr"): void {
+      if (finished) { return; }
       const text = data.toString("utf8");
 
-      // Detect compilation/build processes for extended timeouts
+      // Detect compilation/build processes for extended timeouts.
       if (!isHot && HOT_PATTERNS.test(text)) {
         isHot = true;
-        // Extend the hard timeout by 2x for hot processes (only once)
         if (!hotExtended) {
           hotExtended = true;
-          clearTimeout(hardTimer);
           effectiveTimeoutMs = timeoutMs * 2;
-          setTimeout(() => {
-            if (!finished) {
-              proc.kill("SIGKILL");
-              finish(null, "timeout");
-            }
-          }, effectiveTimeoutMs);
+          scheduleTimeout();
         }
       }
 
-      // Accumulate output
+      // Accumulate output.
       if (stream === "stderr") {
         output += output.length > 0 && !output.endsWith("\n") ? `\n[stderr]\n${text}` : `[stderr]\n${text}`;
       } else {
         output += text;
       }
 
-      // Stream to webview for live feedback
+      // Stream to webview for live feedback.
       context.postMessage({
         type: "command_output",
         content: text,
         stream,
       });
 
-      // Mirror to VSCode terminal panel
+      // Mirror to VSCode terminal panel.
       mirrorOutput(text);
     }
 
@@ -612,15 +637,13 @@ function runCommandStreaming(
       if (finished) { return; }
       finished = true;
 
-      clearTimeout(hardTimer);
+      if (timeoutTimer !== undefined) { clearTimeout(timeoutTimer); }
+      exitCode = code ?? (reason === "timeout" ? 124 : reason === "aborted" ? 130 : 1);
 
-      exitCode = code ?? (reason === "timeout" ? 124 : 1);
-
-      // Clean and truncate output
+      // Clean and truncate output.
       const cleaned = cleanTerminalOutput(output);
       let truncated = cleaned;
       if (cleaned.length > MAX_OUTPUT) {
-        // Keep a head portion and a tail portion so both the start and end are visible
         const headSize = 2_000;
         const tailSize = MAX_OUTPUT - headSize - 200;
         truncated =
@@ -631,43 +654,56 @@ function runCommandStreaming(
 
       const suffix = reason === "timeout"
         ? `[timed out after ${String(Math.round(effectiveTimeoutMs / 1000))}s]`
-        : `[exit code: ${String(exitCode)}]`;
+        : reason === "aborted"
+          ? "[aborted by user]"
+          : `[exit code: ${String(exitCode)}]`;
 
       resolve(`$ ${command}\n${truncated}\n${suffix}`);
     }
 
-    // Wire up event handlers
+    // Wire up event handlers.
     proc.stdout.on("data", (data: Buffer) => { handleChunk(data, "stdout"); });
     proc.stderr.on("data", (data: Buffer) => { handleChunk(data, "stderr"); });
 
     proc.on("close", (code: number | null) => {
+      context.signal.removeEventListener("abort", onAbort);
+      if (killTimer !== undefined) { clearTimeout(killTimer); }
       finish(code);
     });
 
     proc.on("error", (err: Error) => {
+      if (timeoutTimer !== undefined) { clearTimeout(timeoutTimer); }
+      if (killTimer !== undefined) { clearTimeout(killTimer); }
       if (!finished) {
-        clearTimeout(hardTimer);
         finished = true;
         reject(err);
       }
     });
 
-    // Handle abort signal (user pressed Stop / Escape)
+    // Handle abort signal (user pressed Stop / Escape).
     const onAbort = (): void => {
       if (!finished) {
-        // Graceful: SIGTERM first
-        proc.kill("SIGTERM");
-        // Force kill after 3s grace period
-        setTimeout(() => {
-          if (!finished) { proc.kill("SIGKILL"); }
-        }, 3000);
+        output += output.length > 0 && !output.endsWith("\n") ? "\n[command aborted by user]\n" : "[command aborted by user]\n";
+        context.postMessage({
+          type: "command_output",
+          content: "\n[command aborted by user]\n",
+          stream: "stderr",
+        });
+        mirrorOutput("\n[command aborted by user]\n");
+
+        // Graceful: SIGTERM first, to the whole process group on POSIX.
+        killCommandProcess(proc, "SIGTERM");
+        // Force kill after a short grace period. The promise is resolved
+        // immediately so the webview Stop button never waits for stubborn
+        // child processes or inherited pipes to close.
+        killTimer = setTimeout(() => {
+          killCommandProcess(proc, "SIGKILL");
+        }, ABORT_GRACE_MS);
+        finish(null, "aborted");
       }
     };
-    context.signal.addEventListener("abort", onAbort, { once: true });
 
-    proc.on("close", () => {
-      context.signal.removeEventListener("abort", onAbort);
-    });
+    context.signal.addEventListener("abort", onAbort, { once: true });
   });
 }
 

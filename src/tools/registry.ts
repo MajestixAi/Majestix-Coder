@@ -38,6 +38,17 @@ const toolAliases: Record<string, string> = {
   create: "write_to_file",
   create_file: "write_to_file",
   insert: "write_to_file",
+  // OpenAI / Anthropic conventions
+  write_file: "write_to_file",
+  edit: "edit_file",
+  file_edit: "edit_file",
+  patch_file: "apply_patch",
+  // Google Gemini conventions
+  write: "write_to_file",
+  readFile: "read_file",
+  // DeepSeek conventions
+  save_file: "write_to_file",
+  read_file_content: "read_file",
   // Bash / shell aliases
   bash: "execute_command",
   run_command: "execute_command",

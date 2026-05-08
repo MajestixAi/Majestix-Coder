@@ -305,6 +305,12 @@
           "scope": "machine",
           "description": "Pause and warn when a single agent run exceeds this many credits (0 = disabled)"
         },
+        "majestix.requireApprovalAfterCostWarning": {
+          "type": "boolean",
+          "default": true,
+          "scope": "machine",
+          "description": "After the credit warning is acknowledged, disable auto-approval for the rest of the run so future tool actions require confirmation"
+        },
         "majestix.commandWhitelist": {
           "type": "array",
           "items": {

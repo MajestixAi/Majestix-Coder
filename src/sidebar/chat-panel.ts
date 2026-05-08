@@ -42,6 +42,8 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
   private _tabPanel?: vscode.WebviewPanel;
   private _models: ModelInfo[] = [];
   private _abortController: AbortController | null = null;
+  /** Tracks the running agent loop so new messages can queue behind it. */
+  private _currentAgentPromise: Promise<void> | null = null;
   private _mode: string = vscode.workspace.getConfiguration("majestix").get<string>("defaultMode", "code");
   private _enableThinking = true;
   private _pendingApproval: { resolve: (approved: boolean) => void; toolName: string } | null = null;
@@ -175,7 +177,14 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
         if (msg.mode !== undefined && msg.mode.length > 0) {
           this._mode = msg.mode;
         }
-        await this._handleAgentSend(msg.message ?? "", msg.model, msg.attachedFiles);
+        // Queue behind any running agent loop so the new message is appended
+        // to the conversation rather than replacing it. The running loop will
+        // finish (aborted or completed) and persist its partial conversation,
+        // then the new loop starts with the complete context.
+        await this._currentAgentPromise;
+        this._currentAgentPromise = this._handleAgentSend(msg.message ?? "", msg.model, msg.attachedFiles);
+        await this._currentAgentPromise;
+        this._currentAgentPromise = null;
         break;
       case "stop":
         this._abortController?.abort();
@@ -863,6 +872,11 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
 
         if (event.type === "done") {
           triggerCreditRefresh(this._client);
+          // Persist the conversation (includes partial turn from aborted runs).
+          // The conversation from the 'done' event is the complete state —
+          // whether the loop completed normally, was aborted mid-stream,
+          // or hit an error. This ensures _activeConversation is always up
+          // to date so the next sendAgent can build on it.
           await this._persistSession(message, selectedModel ?? "", event.conversation, event.compact_summary);
         }
       }

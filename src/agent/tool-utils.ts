@@ -213,4 +213,23 @@ export function normalizeAliasedInput(
     }
     return;
   }
+
+  if (resolvedName === "write_to_file") {
+    // Google/DeepSeek may send "file" instead of "path"
+    if (input.file !== undefined && input.path === undefined) {
+      input.path = input.file;
+      delete input.file;
+    }
+    // Some models send "file_text" instead of "content"
+    if (input.file_text !== undefined && input.content === undefined) {
+      input.content = input.file_text;
+      delete input.file_text;
+    }
+    // DeepSeek may send "filePath"
+    if (input.filePath !== undefined && input.path === undefined) {
+      input.path = input.filePath;
+      delete input.filePath;
+    }
+    return;
+  }
 }

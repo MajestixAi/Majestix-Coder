@@ -94,7 +94,8 @@ export function activate(context: vscode.ExtensionContext): void {
       const keys = [
         "apiUrl", "defaultModel", "defaultMode", "maxContextFiles",
         "autoApprove", "maxIterations", "commandTimeout",
-        "costWarningThreshold", "telemetry.enabled", "sessionHistory.enabled",
+        "costWarningThreshold", "requireApprovalAfterCostWarning", "commandWhitelist", "terminalMirror",
+        "telemetry.enabled", "sessionHistory.enabled",
       ];
       await Promise.all(
         keys.map((k) => config.update(k, undefined, vscode.ConfigurationTarget.Global))

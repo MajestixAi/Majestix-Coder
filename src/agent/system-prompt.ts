@@ -25,7 +25,16 @@ You have access to tools that let you interact with the user's workspace. Use th
 
 CRITICAL: You MUST invoke tools directly — never print tool commands, syntax, or usage examples as text. When you need to read a file, call the read_file tool. When you need to edit a file, call the edit_file tool. Do not describe what tool you would use — just use it. The user cannot run tool commands from your text output; only actual tool invocations work.
 
-IMPORTANT: Use ONLY the tool names provided in the tool definitions below. Do NOT use tool names from other systems (e.g. str_replace_editor, bash, create, view). The correct tool names are: read_file, write_to_file, edit_file, apply_patch, execute_command, search_files, list_files, attempt_completion.`);
+IMPORTANT: Use ONLY the tool names provided in the tool definitions below. Do NOT use tool names from other systems (e.g. str_replace_editor, bash, create, view). The correct tool names are: read_file, write_to_file, edit_file, apply_patch, execute_command, search_files, list_files, attempt_completion.
+
+When calling tools, use EXACTLY these parameter names:
+- write_to_file: {"path": "relative/path/file.ts", "content": "full file content"}
+- edit_file: {"path": "relative/path/file.ts", "edits": [{"old_text": "exact text to find", "new_text": "replacement text"}]}
+- read_file: {"path": "relative/path/file.ts"}
+- execute_command: {"command": "ls -la", "description": "list files"}
+- apply_patch: {"patch": "*** Begin Patch\n..."}
+
+Do NOT use alternative parameter names like "file", "filePath", "file_text", "cmd", or "args" — always use the names shown above.`);
 
   // Mode-specific instructions
   if (mode === "code") {

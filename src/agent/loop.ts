@@ -230,7 +230,8 @@ export async function* runAgentLoop(
   let compactSummary: string | null = options.compactSummary ?? null;
   const errorTracker = new ErrorTracker();
 
-  while (iteration < maxIterations && !signal.aborted) {
+  try {
+    while (iteration < maxIterations && !signal.aborted) {
     // Rate-limit: 1-second gap prevents back-to-back calls in auto-approve mode
     // from flooding providers and triggering 429s. Racing against the abort event
     // lets the stop button take effect immediately during the delay.
@@ -658,11 +659,21 @@ export async function* runAgentLoop(
 
     if (completed) { break; }
 
-    if (toolResults.length > 0) {
-      const toolResultMsg: Message = { role: "user", content: toolResults };
-      conversation.push(toolResultMsg);
-      modelMessages.push(toolResultMsg);
+      if (toolResults.length > 0) {
+        const toolResultMsg: Message = { role: "user", content: toolResults };
+        conversation.push(toolResultMsg);
+        modelMessages.push(toolResultMsg);
+      }
     }
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      // This is a graceful shutdown. Yield a final 'done' event with the conversation
+      // so far, so the client can save the session state.
+      yield { type: "done", total_credits: totalCredits, iterations: iteration, conversation: [...conversation], compact_summary: compactSummary };
+      return; // End the generator
+    }
+    // Not an AbortError, so re-throw it to be handled by the caller.
+    throw err;
   }
 
   clearAllBackups();

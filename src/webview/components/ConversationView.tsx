@@ -1,5 +1,6 @@
+
 import { useRef, useEffect } from "preact/hooks";
-import type { ConversationItem } from "../types";
+import type { ConversationItem, ToolCardState } from "../types";
 import type { Action, AppState } from "../state";
 import { ChatMessage } from "./ChatMessage";
 import { ToolCard } from "./ToolCard";
@@ -10,7 +11,6 @@ import { CompletionCard } from "./CompletionCard";
 import { ErrorCard } from "./ErrorCard";
 import { Welcome } from "./Welcome";
 import { CopyButton } from "./CopyButton";
-// All rendering handled by sub-components
 
 interface Props {
   items: ConversationItem[];
@@ -24,15 +24,14 @@ interface Props {
 export function ConversationView({ items, hasMessages, isStreaming, lastSentMessage, logoUri, dispatch }: Props) {
   const messagesRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll to bottom
   useEffect(() => {
-    if (messagesRef.current) {
-      requestAnimationFrame(() => {
         if (messagesRef.current) {
-          messagesRef.current.scrollTop = messagesRef.current.scrollHeight;
+          requestAnimationFrame(() => {
+            if (messagesRef.current) {
+              messagesRef.current.scrollTop = messagesRef.current.scrollHeight;
+            }
+          });
         }
-      });
-    }
   }, [items]);
 
   if (!hasMessages) {
@@ -43,46 +42,13 @@ export function ConversationView({ items, hasMessages, isStreaming, lastSentMess
     );
   }
 
-  // Group items into turns: turn-start marks the beginning of an AI turn
-  const rendered: preact.JSX.Element[] = [];
-  let turnItems: ConversationItem[] = [];
-  let inTurn = false;
+  const processedItems = processTurns(items);
 
-  const flushTurn = () => {
-    if (turnItems.length > 0) {
-      const turnKey = turnItems[0].id;
-      rendered.push(
-        <div class="ai-turn" key={turnKey}>
-          {turnItems.map(item => renderItem(item, lastSentMessage, dispatch))}
-        </div>
-      );
-      turnItems = [];
-    }
-    inTurn = false;
-  };
+  const rendered = processedItems.map(item => renderItem(item, lastSentMessage, dispatch));
 
-  for (const item of items) {
-    if (item.kind === "user") {
-      flushTurn();
-      rendered.push(renderItem(item, lastSentMessage, dispatch));
-    } else if (item.kind === "turn-start") {
-      flushTurn();
-      inTurn = true;
-    } else if (inTurn) {
-      turnItems.push(item);
-    } else {
-      // Standalone item (from session restore)
-      rendered.push(renderItem(item, lastSentMessage, dispatch));
-    }
-  }
-  flushTurn();
-
-  // Typing indicator
   if (isStreaming && items.length > 0) {
     const lastItem = items[items.length - 1];
-    const showTyping = lastItem.kind === "turn-start" ||
-      lastItem.kind === "user" ||
-      lastItem.kind === "thinking";
+    const showTyping = lastItem.kind === "turn-start" || lastItem.kind === "user" || lastItem.kind === "thinking";
     if (showTyping) {
       rendered.push(
         <div class="typing-indicator" key="typing" role="status" aria-label="AI is thinking">
@@ -99,6 +65,56 @@ export function ConversationView({ items, hasMessages, isStreaming, lastSentMess
       {rendered}
     </div>
   );
+}
+
+function processTurns(items: ConversationItem[]): ConversationItem[] {
+  const processed: ConversationItem[] = [];
+  let currentTurn: ConversationItem[] = [];
+
+  const flushTurn = () => {
+    if (currentTurn.length > 0) {
+      const toolCalls = new Map<string, ConversationItem>();
+      const toolResults = new Map<string, ConversationItem>();
+
+      for (const item of currentTurn) {
+        if (item.kind === "tool-call") {
+          toolCalls.set(item.tool.id, item);
+        } else if (item.kind === "tool-result") {
+          toolResults.set(item.toolId, item);
+        }
+      }
+
+      for (const item of currentTurn) {
+        if (item.kind === "tool-call" && toolResults.has(item.tool.id)) {
+          const resultItem = toolResults.get(item.tool.id) as Extract<ConversationItem, { kind: "tool-result" }>;
+          const updatedTool: ToolCardState = {
+            ...item.tool,
+            result: resultItem.content,
+            isError: resultItem.isError,
+          };
+          processed.push({ ...item, tool: updatedTool });
+        } else if (item.kind !== "tool-result") {
+          processed.push(item);
+        }
+      }
+      currentTurn = [];
+    }
+  };
+
+  for (const item of items) {
+    if (item.kind === "user") {
+      flushTurn();
+      processed.push(item);
+    } else if (item.kind === "turn-start") {
+      flushTurn();
+      processed.push(item);
+    } else {
+      currentTurn.push(item);
+    }
+  }
+  flushTurn();
+
+  return processed;
 }
 
 function renderItem(
@@ -131,24 +147,8 @@ function renderItem(
         />
       );
 
-    case "tool-result":
-      return (
-        <div class={`tool-card ${item.isError ? "error" : ""}`} key={item.id}>
-          <div class="tool-header" onClick={() => { dispatch({ type: "TOGGLE_ITEM_COLLAPSED", itemId: item.id }); }}>
-            <span class="icon">{item.isError ? "\u26a0\ufe0f" : "\u2705"}</span>
-            <span class="name">Result</span>
-            <span class="desc">{(item.content || "").slice(0, 60)}</span>
-            {item.content && (
-              <CopyButton getText={() => item.content || ""} className="tool-result-copy-btn" />
-            )}
-            <span class="toggle">{"\u25bc"}</span>
-          </div>
-          <div class="tool-body collapsed">{item.content}</div>
-        </div>
-      );
-
     case "approval":
-      return <ApprovalCard key={item.id} approval={item.approval} dispatch={dispatch} />;
+      return <ApprovalCard key={item.id} id={item.id} approval={item.approval} dispatch={dispatch} />;
 
     case "thinking":
       return (
@@ -169,7 +169,7 @@ function renderItem(
       return (
         <div class="credits-info" key={item.id}>
           <span class="credits-model">{item.model}</span>
-          {" \u00b7 "}
+          {" · "}
           <span class="credits-amount">{item.credits.toFixed(2)} cr</span>
         </div>
       );
@@ -178,7 +178,7 @@ function renderItem(
       const opLabel = item.op === "write" ? "Created" : item.op === "edit" ? "Edited" : "Patched";
       return (
         <div class="file-edit-notice" key={item.id}>
-          <span class="file-edit-icon">&#9998;</span>
+          <span class="file-edit-icon">✏️</span>
           <span class="file-edit-op">{opLabel}</span>
           <code class="file-edit-path">{item.path}</code>
           <CopyButton getText={() => item.path} className="file-edit-copy-btn" />
@@ -188,7 +188,7 @@ function renderItem(
 
     case "garble-warning":
       return (
-        <div class="error-msg error-context" key={item.id} style="margin-top:4px;">
+        <div class="error-msg error-context" key={item.id} style={{ marginTop: "4px" }}>
           <strong>Model Compatibility Issue</strong><br />
           The selected model is outputting unrecognized tool-call syntax. For agentic tasks (Code mode),
           please select Claude Sonnet, GPT-4o, or another tool-capable model from the dropdown.
@@ -196,7 +196,7 @@ function renderItem(
       );
 
     case "turn-start":
-      return <span key={item.id} />;
+      return <div key={item.id} class="ai-turn"></div>;
 
     default:
       return <span key={(item as { id: string }).id} />;

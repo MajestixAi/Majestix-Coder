@@ -108,6 +108,26 @@ export function groupSessionsByDate(sessions: { updated_at: string }[]): Map<str
   return groups;
 }
 
+/**
+ * A single assistant turn in the downloaded chat file.
+ * Contains thinking, text, tools, and metadata from one logical response.
+ */
+interface Turn {
+  thinking?: string;
+  text?: string;
+  tools?: TurnTool[];
+  fileEdits?: string[];
+  credits?: string;
+  error?: string;
+  completion?: string;
+}
+
+interface TurnTool {
+  name: string;
+  result?: string;
+  isError?: boolean;
+}
+
 /** Generate download content from conversation items. */
 export function generateDownloadContent(items: { kind: string; [key: string]: unknown }[], model: string): string {
   const NL = "\n";
@@ -117,66 +137,245 @@ export function generateDownloadContent(items: { kind: string; [key: string]: un
     "Model: " + (model || "Auto"), "", "---", "",
   ];
 
+  // Group consecutive assistant items (ai-text + thinking) into single turns.
+  // The webview creates a separate item per SSE chunk, so the same assistant
+  // response can be split across multiple ai-text/thinking items. We merge
+  // them so the downloaded file reads naturally.
+  const turns: Turn[] = [];
+
+  let currentTurn: Turn = {};
+  let hasCurrentTurn = false;
+
   for (const item of items) {
     switch (item.kind) {
       case "user":
+        // Flush any pending turn
+        if (hasCurrentTurn) {
+          turns.push(currentTurn);
+          currentTurn = {};
+          hasCurrentTurn = false;
+        }
         lines.push("## User", "", (item.text as string | undefined) ?? "", "", "---", "");
         break;
+
       case "ai-text":
-        lines.push("## Assistant", "", (item.content as string | undefined) ?? "", "", "---", "");
+        if (!hasCurrentTurn) {
+          currentTurn = {};
+          hasCurrentTurn = true;
+        }
+        currentTurn.text = (currentTurn.text ?? "") + (item.content as string);
         break;
+
       case "thinking": {
         const thinking = item.thinking as { content?: string } | undefined;
         const thinkText = thinking?.content ?? "";
         if (thinkText) {
-          lines.push("<details><summary>Thinking</summary>", "", thinkText, "", "</details>", "");
+          if (!hasCurrentTurn) {
+            currentTurn = {};
+            hasCurrentTurn = true;
+          }
+          currentTurn.thinking = (currentTurn.thinking ?? "") + thinkText;
         }
         break;
       }
+
       case "tool-call": {
-        const tool = item.tool as { name: string; input?: Record<string, unknown>; result?: string; isError?: boolean };
-        const status = tool.isError ? "FAILED" : tool.result ? "OK" : "running";
-        lines.push(`**Tool: ${tool.name}** (${status})`);
-        if (tool.result && tool.result !== "Running...") {
-          lines.push("```", tool.result.slice(0, 4000), "```");
+        if (!hasCurrentTurn) {
+          currentTurn = {};
+          hasCurrentTurn = true;
         }
-        lines.push("");
+        const tool = item.tool as { name: string; input?: Record<string, unknown>; result?: string; isError?: boolean };
+        currentTurn.tools ??= [];
+        currentTurn.tools.push({
+          name: tool.name,
+          result: tool.result,
+          isError: tool.isError,
+        });
         break;
       }
+
       case "tool-result": {
-        const content = (item.content as string | undefined) ?? "";
-        const isErr = (item.isError as boolean | undefined) ?? false;
-        lines.push(`**Tool Result** ${isErr ? "(error)" : ""}`, "```", content.slice(0, 4000), "```", "");
+        // Append result to the last tool call in this turn
+        if (hasCurrentTurn && currentTurn.tools && currentTurn.tools.length > 0) {
+          const lastTool = currentTurn.tools[currentTurn.tools.length - 1];
+          if (lastTool.result === undefined || lastTool.result === "Running...") {
+            lastTool.result = (item.content as string | undefined) ?? "";
+            lastTool.isError = (item.isError as boolean | undefined) ?? false;
+          }
+        }
         break;
       }
+
       case "approval": {
+        if (!hasCurrentTurn) {
+          currentTurn = {};
+          hasCurrentTurn = true;
+        }
+        // Track approvals as part of the turn
+        currentTurn.tools ??= [];
         const approval = item.approval as { toolName?: string; description?: string; approved?: boolean; resolved?: boolean } | undefined;
         if (approval) {
           const status = approval.resolved ? (approval.approved ? "Allowed" : "Rejected") : "Pending";
-          lines.push(`> **Approval: ${approval.toolName ?? ""}** — ${approval.description ?? ""} → ${status}`, "");
+          currentTurn.tools.push({
+            name: `approval (${approval.toolName ?? "unknown"})`,
+            result: `${approval.description ?? ""} → ${status}`,
+            isError: false,
+          });
         }
         break;
       }
+
       case "completion":
-        lines.push("## Completed", "", (item.result as string | undefined) ?? "", "", "---", "");
+        if (!hasCurrentTurn) {
+          currentTurn = {};
+          hasCurrentTurn = true;
+        }
+        currentTurn.completion = (item.result as string | undefined) ?? "";
         break;
+
       case "credits": {
+        if (!hasCurrentTurn) {
+          currentTurn = {};
+          hasCurrentTurn = true;
+        }
         const creditModel = (item.model as string | undefined) ?? "";
         const creditAmount = (item.credits as number | undefined) ?? 0;
-        lines.push(`*${creditModel} · ${creditAmount.toFixed(2)} cr*`, "");
+        const creditLine = `*${creditModel} · ${creditAmount.toFixed(2)} cr*`;
+        currentTurn.credits = (currentTurn.credits ?? "") + " " + creditLine;
         break;
       }
+
       case "error":
-        lines.push("## Error", "", "> " + ((item.message as string | undefined) ?? ""), "", "---", "");
+        if (!hasCurrentTurn) {
+          currentTurn = {};
+          hasCurrentTurn = true;
+        }
+        currentTurn.error = (item.message as string | undefined) ?? "";
         break;
+
       case "file-edit": {
+        if (!hasCurrentTurn) {
+          currentTurn = {};
+          hasCurrentTurn = true;
+        }
         const opLabel = (item.op as string) === "write" ? "Created" : (item.op as string) === "edit" ? "Edited" : "Patched";
-        lines.push(`> ✏️ **${opLabel}:** \`${item.path as string}\``, "");
+        currentTurn.fileEdits ??= [];
+        currentTurn.fileEdits.push(`> ✏️ **${opLabel}:** \`${item.path as string}\``);
         break;
       }
+
       case "garble-warning":
-        lines.push("> **Warning:** Model compatibility issue — unrecognized tool-call syntax", "");
+        if (!hasCurrentTurn) {
+          currentTurn = {};
+          hasCurrentTurn = true;
+        }
+        // Append garble warning to the turn
+        currentTurn.error ??= "";
+        currentTurn.error += (currentTurn.error ? "\n" : "") + "Model compatibility issue — unrecognized tool-call syntax";
         break;
+
+      case "turn-start":
+        // Ignore — structural only
+        break;
+
+      default:
+        break;
+    }
+  }
+
+  // Flush the last turn
+  if (hasCurrentTurn) {
+    turns.push(currentTurn);
+  }
+
+  // Merge consecutive text-only turns — when the model produces text across
+  // multiple iterations (e.g. long responses split by SSE streams), each
+  // iteration creates a separate turn. Merge them so the downloaded file
+  // reads as one coherent assistant response.
+  const mergedTurns: Turn[] = [];
+  for (const turn of turns) {
+    const hasOnlyText =
+      turn.text !== undefined &&
+      turn.text.trim().length > 0 &&
+      !turn.thinking &&
+      !turn.tools &&
+      !turn.fileEdits &&
+      !turn.credits &&
+      !turn.completion &&
+      !turn.error;
+
+    if (hasOnlyText && mergedTurns.length > 0) {
+      const last = mergedTurns[mergedTurns.length - 1];
+      const lastText = last.text;
+      const turnText = turn.text;
+      if (lastText && turnText) {
+        const lastHasOnlyText =
+          !last.thinking &&
+          !last.tools &&
+          !last.fileEdits &&
+          !last.credits &&
+          !last.completion &&
+          !last.error;
+        if (lastHasOnlyText) {
+          last.text = (lastText + "\n\n" + turnText).trim();
+          continue;
+        }
+      }
+    }
+    mergedTurns.push(turn);
+  }
+
+  // Now write the turns to the output
+  for (const turn of mergedTurns) {
+    // Thinking block
+    if (turn.thinking) {
+      lines.push("<details><summary>Thinking</summary>", "", turn.thinking, "", "</details>", "");
+    }
+
+    // Main text
+    if (turn.text) {
+      lines.push("## Assistant", "", turn.text.trim(), "", "---", "");
+    }
+
+    // Tool calls
+    if (turn.tools) {
+      for (const tool of turn.tools) {
+        if (tool.name.startsWith("approval (")) {
+          // Approval line
+          const match = tool.result?.match(/^(.+?) → (Allowed|Rejected|Pending)$/);
+          if (match) {
+            lines.push(`> **Approval: ${tool.name.slice(10, -1)}** — ${match[1]} → ${match[2]}`, "");
+          } else {
+            lines.push(`> **Tool: ${tool.name}** (${tool.result ?? ""})`, "");
+          }
+        } else if (tool.result && tool.result !== "Running...") {
+          const status = tool.isError ? "FAILED" : "OK";
+          lines.push(`**Tool: ${tool.name}** (${status})`);
+          lines.push("```", tool.result.slice(0, 4000), "```", "");
+        }
+      }
+    }
+
+    // File edits
+    if (turn.fileEdits) {
+      for (const fe of turn.fileEdits) {
+        lines.push(fe, "");
+      }
+    }
+
+    // Credits
+    if (turn.credits) {
+      lines.push(turn.credits.trim(), "");
+    }
+
+    // Completion
+    if (turn.completion) {
+      lines.push("## Completed", "", turn.completion, "", "---", "");
+    }
+
+    // Errors
+    if (turn.error) {
+      lines.push("## Error", "", "> " + turn.error, "", "---", "");
     }
   }
 

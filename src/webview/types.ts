@@ -81,6 +81,7 @@ export interface ApprovalState {
   detail?: string;
   resolved?: boolean;
   approved?: boolean;
+  collapsed?: boolean;
 }
 
 /** Thinking block state. */

@@ -96,6 +96,9 @@ export interface AppState {
 
   /** Whether a garble warning has been shown for the current turn. */
   garbleWarned: boolean;
+
+  /** Whether an approval is currently pending user response. Blocks input when true. */
+  hasPendingApproval: boolean;
 }
 
 export const initialState: AppState = {
@@ -125,6 +128,7 @@ export const initialState: AppState = {
   slashPopupVisible: false,
   mentionPopupVisible: false,
   garbleWarned: false,
+  hasPendingApproval: false,
 };
 
 // ── Actions ──
@@ -434,6 +438,7 @@ export function reducer(state: AppState, action: Action): AppState {
       const [id, s2] = uid(s);
       return {
         ...s2,
+        hasPendingApproval: true,
         items: [...s2.items, {
           kind: "approval", id, approval: {
             toolName: action.toolName, description: action.description, detail: action.detail,
@@ -449,7 +454,7 @@ export function reducer(state: AppState, action: Action): AppState {
         }
         return item;
       });
-      return { ...state, items: updated };
+      return { ...state, items: updated, hasPendingApproval: false };
     }
 
     case "COMPLETION": {
@@ -642,6 +647,9 @@ export function reducer(state: AppState, action: Action): AppState {
           }
           if (item.kind === "thinking") {
             return { ...item, thinking: { ...item.thinking, collapsed: !item.thinking.collapsed } };
+          }
+          if (item.kind === "approval") {
+            return { ...item, approval: { ...item.approval, collapsed: !item.approval.collapsed } };
           }
         }
         return item;

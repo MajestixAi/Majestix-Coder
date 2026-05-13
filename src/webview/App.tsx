@@ -121,7 +121,7 @@ export function App({ logoUri }: Props) {
 
     window.addEventListener("message", handler);
     return () => { window.removeEventListener("message", handler); };
-  }, [state.sessionAutoApprove, state.autoApproveUntil, state.selectedModel, state.mode]);
+  }, [state.sessionAutoApprove, state.autoApproveUntil, state.selectedModel, state.mode, state.isStreaming]);
 
   // ── Request initial data ──
   useEffect(() => {

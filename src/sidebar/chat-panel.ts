@@ -194,24 +194,30 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
    * @param msg - The parsed webview message.
    */
   private async _handleWebviewMessage(msg: WebviewMessage): Promise<void> {
+    // "stop" fires immediately — it MUST NOT be queued behind _currentAgentPromise.
+    // Check synchronously before any async/await that might block.
+    if (msg.type === "stop") {
+      this._abortController?.abort();
+      return;
+    }
+
+    // "sendAgent" queues behind any running agent loop so new messages append
+    // to the conversation rather than replacing it. The running loop will finish
+    // (aborted or completed) and persist its partial conversation, then the new
+    // loop starts with the complete context.
+    if (msg.type === "sendAgent") {
+      if (msg.mode !== undefined && msg.mode.length > 0) {
+        this._mode = msg.mode;
+      }
+      await this._currentAgentPromise;
+      this._currentAgentPromise = this._handleAgentSend(msg.message ?? "", msg.model, msg.attachedFiles);
+      await this._currentAgentPromise;
+      this._currentAgentPromise = null;
+      return;
+    }
+
+
     switch (msg.type) {
-      case "sendAgent":
-        // Sync mode from webview in case 'change' event was missed
-        if (msg.mode !== undefined && msg.mode.length > 0) {
-          this._mode = msg.mode;
-        }
-        // Queue behind any running agent loop so the new message is appended
-        // to the conversation rather than replacing it. The running loop will
-        // finish (aborted or completed) and persist its partial conversation,
-        // then the new loop starts with the complete context.
-        await this._currentAgentPromise;
-        this._currentAgentPromise = this._handleAgentSend(msg.message ?? "", msg.model, msg.attachedFiles);
-        await this._currentAgentPromise;
-        this._currentAgentPromise = null;
-        break;
-      case "stop":
-        this._abortController?.abort();
-        break;
       case "loadModels":
         await this._loadModels();
         break;

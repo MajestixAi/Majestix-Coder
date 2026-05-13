@@ -371,6 +371,23 @@ export async function* runAgentLoop(
           // The API never emits them inside a thinking trace — thinking-trace
           // tool calls appear as embedded text/XML, not as structured events.
           // No thinking-state filtering here.
+
+          // Flush the think-parser safety-hold buffer BEFORE processing the
+          // tool call. processThinkBuffer holds back the last N characters
+          // (to guard against partial  thinking /  response tag boundaries).
+          // When a tool_use event arrives between text chunks, those held-back
+          // characters would otherwise be stranded until the next text event,
+          // causing output text to appear AFTER the tool card in the UI.
+          if (thinkBuffer.length > 0) {
+            if (inThinkTag) {
+              yield { type: "thinking_content", content: thinkBuffer };
+            } else {
+              yield { type: "text", content: thinkBuffer };
+              currentText += thinkBuffer;
+            }
+            thinkBuffer = "";
+          }
+
           if (currentText.length > 0) {
             assistantBlocks.push({ type: "text", text: currentText });
             currentText = "";
@@ -385,6 +402,18 @@ export async function* runAgentLoop(
           trackEvent("tool.call", { tool: event.name, iteration });
 
         } else if (event.type === "done") {
+          // Flush the think-parser safety-hold buffer before the credits line.
+          // Same issue as tool_use: held-back chars would appear after credits.
+          if (thinkBuffer.length > 0) {
+            if (inThinkTag) {
+              yield { type: "thinking_content", content: thinkBuffer };
+            } else {
+              yield { type: "text", content: thinkBuffer };
+              currentText += thinkBuffer;
+            }
+            thinkBuffer = "";
+          }
+
           receivedDone = true;
           activeModelKey = event.model.length > 0 ? event.model : activeModelKey;
           totalCredits += event.credits_used;
@@ -599,8 +628,23 @@ export async function* runAgentLoop(
       }
 
       const filePath = typeof toolCall.input.path === "string" ? toolCall.input.path : undefined;
+      
+      // Respect abort signal before tool execution (user pressed stop)
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- signal can be aborted externally by AbortController
+      if (signal.aborted) {
+        yield { type: "error", message: "Cancelled by user" };
+        return;
+      }
+      
       try {
         const result = await handler.execute(toolCall.input, toolContext);
+
+        // Respect abort signal after tool execution (user pressed stop while tool was running)
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- signal can be aborted externally by AbortController
+        if (signal.aborted) {
+          yield { type: "error", message: "Cancelled by user" };
+          return;
+        }
         result.tool_use_id = toolCall.id;
 
         // Hard cap: truncate oversized tool output before it enters the conversation.

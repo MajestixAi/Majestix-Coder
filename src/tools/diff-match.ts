@@ -208,6 +208,15 @@ export interface FuzzyMatch {
   matchedText: string;
 }
 
+/** Maximum characters allowed in needle for fuzzy search. */
+const FUZZY_MAX_CHARS = 2_000;
+
+/** Maximum lines allowed in needle for fuzzy search. */
+const FUZZY_MAX_LINES = 50;
+
+/** Maximum search radius (lines) for middle-out expansion. */
+const FUZZY_MAX_RADIUS = 20;
+
 /**
  * Search for `needle` in `haystack` using fuzzy matching.
  * Starts from a hint position (or middle) and expands outward.
@@ -232,6 +241,16 @@ export function fuzzySearch(
     return null;
   }
 
+  // Guard: reject needles that are too long for efficient fuzzy matching
+  if (needle.length > FUZZY_MAX_CHARS) {
+    return null;
+  }
+
+  // Guard: reject needles with too many lines
+  if (needleLineCount > FUZZY_MAX_LINES) {
+    return null;
+  }
+
   // Determine starting position
   const startLine = hintLine !== undefined
     ? Math.min(Math.max(0, hintLine - 1), haystackLines.length - 1)
@@ -241,7 +260,10 @@ export function fuzzySearch(
   let bestSimilarity = threshold;
 
   // Middle-out search: check startLine first, then expand outward
-  const maxRadius = Math.max(startLine, haystackLines.length - startLine);
+  const maxRadius = Math.min(
+    FUZZY_MAX_RADIUS,
+    Math.max(startLine, haystackLines.length - startLine)
+  );
 
   for (let radius = 0; radius <= maxRadius; radius++) {
     const positions = radius === 0
@@ -270,7 +292,7 @@ export function fuzzySearch(
     }
 
     // Early exit: if we've searched enough and found a good match
-    if (radius > 50 && bestMatch !== null && bestMatch.similarity > 0.9) {
+    if (radius >= FUZZY_MAX_RADIUS - 1 && bestMatch !== null && bestMatch.similarity > 0.9) {
       break;
     }
   }

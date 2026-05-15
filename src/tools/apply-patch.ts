@@ -11,6 +11,7 @@ import * as vscode from "vscode";
 import { stashBackup } from "./file-backup";
 import { resolveWorkspacePath } from "../util/path-safety";
 import { collectPostWriteDiagnostics } from "./post-write-diagnostics";
+import { cachedReadFile, cachedWriteFile } from "../util/file-cache";
 import type { ToolContext, ToolHandler, ToolResult } from "./types";
 
 // ── Patch format constants ──────────────────────────────────────────
@@ -362,7 +363,7 @@ export const applyPatchTool: ToolHandler = {
       if (op.type === "add") {
         // Create new file
         try {
-          await vscode.workspace.fs.writeFile(uri, new TextEncoder().encode(op.content ?? ""));
+          await cachedWriteFile(uri, op.content ?? "");
           const lineCount = (op.content ?? "").split("\n").length;
           const diag = await collectPostWriteDiagnostics(uri);
           results.push(`${op.path}: created (${String(lineCount)} lines)${diag}`);
@@ -395,8 +396,7 @@ export const applyPatchTool: ToolHandler = {
 
       let rawContent: string;
       try {
-        const bytes = await vscode.workspace.fs.readFile(uri);
-        rawContent = new TextDecoder().decode(bytes);
+        rawContent = await cachedReadFile(uri);
       } catch {
         results.push(`${op.path}: file not found`);
         totalFailed++;
@@ -408,7 +408,7 @@ export const applyPatchTool: ToolHandler = {
       const { result, applied, failed } = applyChunks(rawContent, op.chunks);
 
       if (applied > 0) {
-        await vscode.workspace.fs.writeFile(uri, new TextEncoder().encode(result));
+        await cachedWriteFile(uri, result);
         // Check for LSP errors introduced by the patch
         const diag = await collectPostWriteDiagnostics(uri);
         if (diag) { results.push(diag); }

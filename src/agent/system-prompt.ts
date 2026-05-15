@@ -1,7 +1,8 @@
-import * as vscode from "vscode";
-import * as os from "os";
-import { exec } from "child_process";
-import { getRecentlyEditedFiles } from "../context/active-file";
+import { exec } from 'child_process';
+import * as os from 'os';
+import * as vscode from 'vscode';
+
+import { getRecentlyEditedFiles } from '../context/active-file';
 
 /**
  * Build the system prompt for the agent, including identity, rules, and environment context.
@@ -34,7 +35,13 @@ When calling tools, use EXACTLY these parameter names:
 - execute_command: {"command": "ls -la", "description": "list files"}
 - apply_patch: {"patch": "*** Begin Patch\n..."}
 
-Do NOT use alternative parameter names like "file", "filePath", "file_text", "cmd", or "args" — always use the names shown above.`);
+Do NOT use alternative parameter names like "file", "filePath", "file_text", "cmd", or "args" — always use the names shown above.
+
+IMPORTANT FOR FILE OPERATIONS:
+- When reading a file with read_file, the output includes line numbers like "   42 | code here"
+- When using edit_file, the old_text must be the RAW CODE ONLY — do NOT include the line numbers or the "| " prefix from read_file output
+- Copy only the code portion from read_file output into old_text
+- If you're unsure about the exact text to find, use read_file first to see the current content, then copy the exact code you want to replace`);
 
   // Mode-specific instructions
   if (mode === "code") {

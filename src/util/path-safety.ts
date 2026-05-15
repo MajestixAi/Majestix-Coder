@@ -1,7 +1,7 @@
-import * as path from "path";
-import * as vscode from "vscode";
+import * as path from 'path';
+import * as vscode from 'vscode';
 
-import { MAX_FILE_SIZE } from "../constants";
+import { MAX_FILE_SIZE } from '../constants';
 
 /**
  * Examples for resolveWorkspacePath:
@@ -38,13 +38,42 @@ export function resolveWorkspacePath(
     throw new Error("Path contains invalid characters");
   }
 
+  let cleanedPath = inputPath.trim();
+
+  // Handle URI-style paths (file:///path/to/file or file://path/to/file)
+  if (cleanedPath.startsWith("file://")) {
+    try {
+      const uri = vscode.Uri.parse(cleanedPath);
+      cleanedPath = uri.fsPath;
+    } catch {
+      // Fall through to normal processing
+    }
+  }
+
+  // Handle leading/trailing quotes that models sometimes include
+  cleanedPath = cleanedPath.replace(/^["']|["']$/g, "");
+
+  // Handle backslash paths (Windows-style from some models)
+  cleanedPath = cleanedPath.replace(/\\/g, "/");
+
+  // Handle leading slash that might be workspace-relative
+  // e.g., "/src/index.ts" should become "src/index.ts"
+  if (cleanedPath.startsWith("/") && !cleanedPath.startsWith("//")) {
+    // Check if this looks like an absolute path outside workspace
+    // If it starts with common workspace root patterns, treat as relative
+    const rootFsPath = workspaceRoot.fsPath;
+    if (!cleanedPath.startsWith(rootFsPath)) {
+      cleanedPath = cleanedPath.replace(/^\//, "");
+    }
+  }
+
   const rootFsPath = workspaceRoot.fsPath;
 
   // Accept absolute paths — security is enforced by the workspace-escape check below.
   // This handles the common case where a user copies a path via "Copy Path" in the Explorer.
-  const resolvedFsPath = path.isAbsolute(inputPath)
-    ? inputPath
-    : path.resolve(rootFsPath, inputPath);
+  const resolvedFsPath = path.isAbsolute(cleanedPath)
+    ? cleanedPath
+    : path.resolve(rootFsPath, cleanedPath);
 
   const relative = path.relative(rootFsPath, resolvedFsPath);
 

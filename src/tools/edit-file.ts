@@ -1,5 +1,10 @@
-import * as vscode from "vscode";
+import * as vscode from 'vscode';
 
+import {
+  cachedReadFile,
+  cachedWriteFile,
+} from '../util/file-cache';
+import { resolveWorkspacePath } from '../util/path-safety';
 import {
   detectLineEnding,
   escapeDollarSigns,
@@ -9,15 +14,17 @@ import {
   normalizeLineEndings,
   restoreLineEndings,
   stripLineNumberPrefixes,
-} from "./diff-match";
-import { revertFile, stashBackup } from "./file-backup";
-import { resolveWorkspacePath } from "../util/path-safety";
-import { collectPostWriteDiagnostics } from "./post-write-diagnostics";
+} from './diff-match';
+import {
+  revertFile,
+  stashBackup,
+} from './file-backup';
+import { collectPostWriteDiagnostics } from './post-write-diagnostics';
 import type {
   ToolContext,
   ToolHandler,
   ToolResult,
-} from "./types";
+} from './types';
 
 export const editFileTool: ToolHandler = {
   definition: {
@@ -94,8 +101,7 @@ export const editFileTool: ToolHandler = {
 
     let rawContent: string;
     try {
-      const bytes = await vscode.workspace.fs.readFile(uri);
-      rawContent = new TextDecoder().decode(bytes);
+      rawContent = await cachedReadFile(uri);
     } catch {
       return {
         tool_use_id: "",
@@ -129,9 +135,16 @@ export const editFileTool: ToolHandler = {
     }
 
     if (applied.length === 0) {
+      // Build helpful error message with context for the model to self-correct
+      const errorDetails = failed.map(f => `  - ${f}`).join("\n");
+      const availableEdits = edits.map((e, i) => {
+        const oldText = typeof e.old_text === "string" ? e.old_text : String(e.old_text);
+        const firstLine = oldText.split("\n")[0]?.slice(0, 80) ?? "(empty)";
+        return `  Edit ${String(i + 1)}: looking for "${firstLine}..."`;
+      }).join("\n");
       return {
         tool_use_id: "",
-        content: `No edits could be applied to ${filePath}:\n${failed.join("\n")}`,
+        content: `No edits could be applied to ${filePath}.\n\nFailed edits:\n${errorDetails}\n\nRequested edits:\n${availableEdits}\n\nTo fix this:\n1. Use read_file to see the current file content\n2. Copy the EXACT code you want to replace (no line numbers, no modifications)\n3. Use edit_file again with the exact text from the file`,
         is_error: true,
       };
     }
@@ -142,7 +155,7 @@ export const editFileTool: ToolHandler = {
     // Restore original line endings and write
     const finalContent = restoreLineEndings(modified, originalLineEnding);
     try {
-      await vscode.workspace.fs.writeFile(uri, new TextEncoder().encode(finalContent));
+      await cachedWriteFile(uri, finalContent);
     } catch {
       // Write failed — revert to the backed-up content
       await revertFile(uri).catch(() => {/* ignore revert failures */});

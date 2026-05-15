@@ -1,14 +1,14 @@
-import type { ToolHandler } from "./types";
-import type { ToolDefinition } from "../api/client";
-import { readFileTool } from "./read-file";
-import { writeToFileTool } from "./write-file";
-import { writePlanTool } from "./write-plan";
-import { editFileTool } from "./edit-file";
-import { listFilesTool } from "./list-files";
-import { searchFilesTool } from "./search-files";
-import { executeCommandTool } from "./execute-command";
-import { attemptCompletionTool } from "./attempt-completion";
-import { applyPatchTool } from "./apply-patch";
+import type { ToolDefinition } from '../api/client';
+import { applyPatchTool } from './apply-patch';
+import { attemptCompletionTool } from './attempt-completion';
+import { editFileTool } from './edit-file';
+import { executeCommandTool } from './execute-command';
+import { listFilesTool } from './list-files';
+import { readFileTool } from './read-file';
+import { searchFilesTool } from './search-files';
+import type { ToolHandler } from './types';
+import { writeToFileTool } from './write-file';
+import { writePlanTool } from './write-plan';
 
 /**
  * All available tools, keyed by name.
@@ -48,7 +48,6 @@ const toolAliases: Record<string, string> = {
   readFile: "read_file",
   // DeepSeek conventions
   save_file: "write_to_file",
-  read_file_content: "read_file",
   // Bash / shell aliases
   bash: "execute_command",
   run_command: "execute_command",
@@ -67,6 +66,33 @@ const toolAliases: Record<string, string> = {
   // Patch aliases
   patch: "apply_patch",
   diff: "apply_patch",
+  // Additional Gemini/OpenAI variations
+  readfile: "read_file",
+  writefile: "write_to_file",
+  editfile: "edit_file",
+  applypatch: "apply_patch",
+  executecommand: "execute_command",
+  searchfiles: "search_files",
+  listfiles: "list_files",
+  attemptcompletion: "attempt_completion",
+  // Claude-style aliases
+  code_editor: "edit_file",
+  // GPT-style aliases
+  python: "execute_command",
+  // Additional file operation aliases
+  new_file: "write_to_file",
+  update_file: "edit_file",
+  modify_file: "edit_file",
+  replace_in_file: "edit_file",
+  search_and_replace: "edit_file",
+  // Gemini 2.0+ specific
+  file_reader: "read_file",
+  file_writer: "write_to_file",
+  file_editor: "edit_file",
+  command_executor: "execute_command",
+  // OpenAI o1/o3 specific
+  code_interpreter: "execute_command",
+  file_search: "search_files",
 };
 
 /**

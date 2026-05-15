@@ -1,15 +1,22 @@
-import * as vscode from "vscode";
+import * as vscode from 'vscode';
 
-import { MAX_WRITE_SIZE } from "../constants";
-import { stashBackup } from "./file-backup";
-import { detectLineEnding, restoreLineEndings } from "./diff-match";
-import { resolveWorkspacePath } from "../util/path-safety";
-import { collectPostWriteDiagnostics } from "./post-write-diagnostics";
+import { MAX_WRITE_SIZE } from '../constants';
+import {
+  cachedReadFile,
+  cachedWriteFile,
+} from '../util/file-cache';
+import { resolveWorkspacePath } from '../util/path-safety';
+import {
+  detectLineEnding,
+  restoreLineEndings,
+} from './diff-match';
+import { stashBackup } from './file-backup';
+import { collectPostWriteDiagnostics } from './post-write-diagnostics';
 import type {
   ToolContext,
   ToolHandler,
   ToolResult,
-} from "./types";
+} from './types';
 
 export const writeToFileTool: ToolHandler = {
   definition: {
@@ -40,15 +47,36 @@ export const writeToFileTool: ToolHandler = {
     input: Record<string, unknown>,
     context: ToolContext
   ): Promise<ToolResult> {
-    const filePath = input.path as string;
-    const newContent = input.content as string;
+    // Normalize path from various parameter names models may use
+    const filePath = (input.path ?? input.file_path ?? input.file ?? input.filepath ?? input.filename ?? input.filePath ?? input.fileName) as string | undefined;
+    // Normalize content from various parameter names models may use
+    const newContent = (input.content ?? input.file_text ?? input.text ?? input.data ?? input.source ?? input.code ?? input.fileContent ?? input.file_content) as string | undefined;
+    
+    if (filePath === undefined || filePath.length === 0) {
+      const receivedKeys = Object.keys(input).join(", ");
+      return {
+        tool_use_id: "",
+        content: `Missing required parameter: path (file path relative to workspace root). Received keys: ${receivedKeys}. Expected: {"path": "relative/path/file.ts", "content": "full file content"}.`,
+        is_error: true,
+      };
+    }
+    
+    if (newContent === undefined) {
+      const receivedKeys = Object.keys(input).join(", ");
+      return {
+        tool_use_id: "",
+        content: `Missing required parameter: content (full file content to write). Received keys: ${receivedKeys}. Expected: {"path": "relative/path/file.ts", "content": "full file content"}.`,
+        is_error: true,
+      };
+    }
+    
     let uri: vscode.Uri;
     try {
       uri = resolveWorkspacePath(context.workspaceRoot, filePath);
     } catch (e: unknown) {
       return {
         tool_use_id: "",
-        content: `Invalid path: ${e instanceof Error ? e.message : String(e)}`,
+        content: `Invalid path: ${e instanceof Error ? e.message : String(e)}\n\nPath received: "${filePath}"\n\nMake sure the path is relative to the workspace root and uses forward slashes (/).`,
         is_error: true,
       };
     }
@@ -58,8 +86,7 @@ export const writeToFileTool: ToolHandler = {
     let isNew = false;
     let originalLineEnding: "\n" | "\r\n" = "\n";
     try {
-      const bytes = await vscode.workspace.fs.readFile(uri);
-      oldContent = new TextDecoder().decode(bytes);
+      oldContent = await cachedReadFile(uri);
       originalLineEnding = detectLineEnding(oldContent);
     } catch {
       isNew = true;
@@ -89,7 +116,7 @@ export const writeToFileTool: ToolHandler = {
     const finalContent = isNew ? newContent : restoreLineEndings(newContent, originalLineEnding);
 
     // Write the file
-    await vscode.workspace.fs.writeFile(uri, new TextEncoder().encode(finalContent));
+    await cachedWriteFile(uri, finalContent);
 
     // Wait briefly for VSCode diagnostics to catch up, then collect any new errors
     const diagnosticFeedback = await collectPostWriteDiagnostics(uri);

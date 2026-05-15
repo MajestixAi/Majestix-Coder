@@ -1,12 +1,13 @@
-import * as vscode from "vscode";
+import * as vscode from 'vscode';
 
-import { resolveWorkspacePath } from "../util/path-safety";
-import { MAX_FILE_SIZE } from "../constants";
+import { MAX_FILE_SIZE } from '../constants';
+import { cachedReadFile } from '../util/file-cache';
+import { resolveWorkspacePath } from '../util/path-safety';
 import type {
   ToolContext,
   ToolHandler,
   ToolResult,
-} from "./types";
+} from './types';
 
 export const readFileTool: ToolHandler = {
   definition: {
@@ -40,9 +41,20 @@ export const readFileTool: ToolHandler = {
     input: Record<string, unknown>,
     context: ToolContext
   ): Promise<ToolResult> {
-    const filePath = input.path as string;
-    const startLine = input.start_line as number | undefined;
-    const endLine = input.end_line as number | undefined;
+    // Normalize path from various parameter names models may use
+    const filePath = (input.path ?? input.file_path ?? input.file ?? input.filepath ?? input.filename ?? input.filePath ?? input.fileName) as string | undefined;
+    
+    if (filePath === undefined || filePath.length === 0) {
+      const receivedKeys = Object.keys(input).join(", ");
+      return {
+        tool_use_id: "",
+        content: `Missing required parameter: path (file path relative to workspace root). Received keys: ${receivedKeys}. Expected: {"path": "relative/path/file.ts"}.`,
+        is_error: true,
+      };
+    }
+    
+    const startLine = (input.start_line ?? input.startLine ?? input.line_start ?? input.from_line ?? input.offset) as number | undefined;
+    const endLine = (input.end_line ?? input.endLine ?? input.line_end ?? input.to_line) as number | undefined;
 
     let uri: vscode.Uri;
     try {
@@ -50,7 +62,7 @@ export const readFileTool: ToolHandler = {
     } catch (e: unknown) {
       return {
         tool_use_id: "",
-        content: `Invalid path: ${e instanceof Error ? e.message : String(e)}`,
+        content: `Invalid path: ${e instanceof Error ? e.message : String(e)}\n\nPath received: "${filePath}"\n\nMake sure the path is relative to the workspace root and uses forward slashes (/).`,
         is_error: true,
       };
     }
@@ -73,8 +85,7 @@ export const readFileTool: ToolHandler = {
         };
       }
 
-      const bytes = await vscode.workspace.fs.readFile(uri);
-      const text = new TextDecoder().decode(bytes);
+      const text = await cachedReadFile(uri);
       let lines = text.split("\n");
 
       // Apply line range

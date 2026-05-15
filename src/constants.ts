@@ -1,13 +1,13 @@
 // ── File I/O limits ────────────────────────────────────────────────────────
 
 /** Maximum file size (bytes) for read_file when no line range is specified. */
-export const MAX_FILE_SIZE = 500_000;
+export const MAX_FILE_SIZE = 10_000_000;
 
-/** Maximum content length (chars) for write_to_file to prevent runaway writes. */
-export const MAX_WRITE_SIZE = 1_000_000;
+/** Maximum content length (bytes) for write_to_file. */
+export const MAX_WRITE_SIZE = 10_000_000;
 
 /** Maximum file size (bytes) for search_files. */
-export const MAX_SEARCH_FILE_SIZE = 500_000;
+export const MAX_SEARCH_FILE_SIZE = 10_000_000;
 
 /** Maximum number of results returned by search_files. */
 export const MAX_SEARCH_RESULTS = 100;
@@ -61,7 +61,7 @@ export const FAILURE_WINDOW_MS = 5 * 60 * 1_000;
 // ── Post-write diagnostics ────────────────────────────────────────────────
 
 /** Delay (ms) after a file write before checking diagnostics. */
-export const POST_WRITE_DIAGNOSTIC_DELAY_MS = 300;
+export const POST_WRITE_DIAGNOSTIC_DELAY_MS = 100;
 
 /** Maximum errors shown in post-write diagnostic feedback. */
 export const MAX_DIAGNOSTIC_ERRORS = 5;

@@ -19,7 +19,7 @@ export interface DiagnosticInfo {
   source?: string;
 }
 
-const MAX_FILE_SIZE = 50_000;
+const MAX_FILE_SIZE = 10_000_000;
 
 // Track recently edited files for workspace context
 const recentlyEditedFiles: { path: string; timestamp: number }[] = [];

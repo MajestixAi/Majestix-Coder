@@ -1,5 +1,7 @@
 import * as vscode from "vscode";
 
+import { cachedReadFile } from "../util/file-cache";
+
 /**
  * In-memory file backup store.
  *
@@ -29,8 +31,8 @@ const backups = new Map<string, BackupEntry>();
  */
 export async function stashBackup(uri: vscode.Uri): Promise<void> {
   try {
-    const content = await vscode.workspace.fs.readFile(uri);
-    setBackup(uri, content);
+    const content = await cachedReadFile(uri);
+    setBackup(uri, new TextEncoder().encode(content));
   } catch {
     // File doesn't exist yet — store empty sentinel
     setBackup(uri, new Uint8Array(0));

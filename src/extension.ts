@@ -1,24 +1,30 @@
-import * as vscode from "vscode";
+import * as vscode from 'vscode';
 
-import { MajestixClient } from "./api/client";
-import { ApiKeyManager } from "./auth/api-key";
-import { registerAskCommand } from "./commands/ask";
-import { registerExplainCommand } from "./commands/explain";
-import { registerFixCommand } from "./commands/fix";
-import { registerGenerateCommand } from "./commands/generate";
-import { registerCommitMessageCommand, registerPrDescriptionCommand } from "./commands/git-assist";
-import { registerRefactorCommand } from "./commands/refactor";
-import { registerReviewCommand } from "./commands/review";
-import { registerRunTodosCommand } from "./commands/run-todos";
-import { startTrackingEdits } from "./context/active-file";
-import { ChatPanelProvider } from "./sidebar/chat-panel";
-import { ensureChatInSecondarySidebar, revealChatPanel } from "./sidebar/reveal";
+import { MajestixClient } from './api/client';
+import { ApiKeyManager } from './auth/api-key';
+import { registerAskCommand } from './commands/ask';
+import { registerExplainCommand } from './commands/explain';
+import { registerFixCommand } from './commands/fix';
+import { registerGenerateCommand } from './commands/generate';
+import {
+  registerCommitMessageCommand,
+  registerPrDescriptionCommand,
+} from './commands/git-assist';
+import { registerRefactorCommand } from './commands/refactor';
+import { registerReviewCommand } from './commands/review';
+import { registerRunTodosCommand } from './commands/run-todos';
+import { startTrackingEdits } from './context/active-file';
+import { ChatPanelProvider } from './sidebar/chat-panel';
+import {
+  ensureChatInSecondarySidebar,
+  revealChatPanel,
+} from './sidebar/reveal';
+import { disposeCommandResources } from './tools/execute-command';
 import {
   createCreditsStatusBar,
   disposeCreditsStatusBar,
-} from "./util/credits";
-import { disposeTelemetry } from "./util/telemetry";
-import { disposeCommandResources } from "./tools/execute-command";
+} from './util/credits';
+import { disposeTelemetry } from './util/telemetry';
 
 const TELEMETRY_CONSENT_KEY = "majestix.telemetryConsentPrompted";
 
@@ -45,27 +51,31 @@ export function activate(context: vscode.ExtensionContext): void {
   });
 
   // Chat panel — registered in all three panes (primary sidebar, bottom panel, secondary sidebar)
-  const chatPanel = new ChatPanelProvider(context.extensionUri, client, context, keyManager);
+  // Each view type gets its OWN ChatPanelProvider instance so state (agent loop, conversation,
+  // session, abort controller) is isolated between windows. This prevents a running agent in
+  // one window from streaming into another window's sidebar.
+  const chatPanelPrimary = new ChatPanelProvider(context.extensionUri, client, context, keyManager);
+  const chatPanelSecondary = new ChatPanelProvider(context.extensionUri, client, context, keyManager);
   const retainOpts = { webviewOptions: { retainContextWhenHidden: true } };
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(
       ChatPanelProvider.viewType,
-      chatPanel,
+      chatPanelPrimary,
       retainOpts
     ),
     vscode.window.registerWebviewViewProvider(
       "majestix.chatPanelSecondary",
-      chatPanel,
+      chatPanelSecondary,
       retainOpts
     )
   );
 
-  // Helper to forward command messages to the sidebar webview
-  const postToSidebar = (msg: unknown): void => { chatPanel.postMessage(msg); };
+  // Helper to forward command messages to the primary sidebar webview
+  const postToSidebar = (msg: unknown): void => { chatPanelPrimary.postMessage(msg); };
 
   // Register commands
   context.subscriptions.push(
-    registerAskCommand(client, postToSidebar, chatPanel),
+    registerAskCommand(client, postToSidebar, chatPanelPrimary),
     registerExplainCommand(client, postToSidebar),
     registerRefactorCommand(client, postToSidebar),
     registerFixCommand(client, postToSidebar),
@@ -105,11 +115,11 @@ export function activate(context: vscode.ExtensionContext): void {
 
     // Session management commands
     vscode.commands.registerCommand("majestix.newChat", async () => {
-      chatPanel.postMessage({ type: "session:new" });
+      chatPanelPrimary.postMessage({ type: "session:new" });
       await revealChatPanel();
     }),
     vscode.commands.registerCommand("majestix.sessionHistory", async () => {
-      chatPanel.postMessage({ type: "session:list" });
+      chatPanelPrimary.postMessage({ type: "session:list" });
       await revealChatPanel();
     }),
     // Send terminal output to chat
@@ -163,7 +173,7 @@ export function activate(context: vscode.ExtensionContext): void {
               : text;
             const content = `\`\`\`terminal\n${trimmed}\n\`\`\``;
 
-            chatPanel.postMessage({
+            chatPanelPrimary.postMessage({
               type: "ask",
               message: `Here is the terminal output. Help me understand or fix any issues:\n\n${content}`,
               rawQuestion: "Terminal output — help me debug",
@@ -215,7 +225,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
 
     vscode.commands.registerCommand("majestix.openInTab", () => {
-      chatPanel.openInTab();
+      chatPanelPrimary.openInTab();
     }),
 
     vscode.commands.registerCommand("majestix.moveToSecondarySidebar", async () => {

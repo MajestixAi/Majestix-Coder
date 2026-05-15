@@ -1,43 +1,47 @@
-import * as vscode from "vscode";
+import * as vscode from 'vscode';
 
 import {
   ContentBlock,
   MajestixClient,
   Message,
-} from "../api/client";
+} from '../api/client';
+import {
+  clearAllBackups,
+  revertFile,
+} from '../tools/file-backup';
 import {
   getToolDefinitions,
   getToolHandler,
   getToolNames,
   resolveToolName,
-} from "../tools/registry";
-import { clearAllBackups, revertFile } from "../tools/file-backup";
-import { resolveWorkspacePath } from "../util/path-safety";
-import type { ToolContext } from "../tools/types";
-import { trackEvent } from "../util/telemetry";
-import { ErrorTracker } from "./error-tracker";
+} from '../tools/registry';
+import type { ToolContext } from '../tools/types';
+import { resolveWorkspacePath } from '../util/path-safety';
+import { trackEvent } from '../util/telemetry';
+import {
+  buildCompactFrame,
+  COMPACT_BUDGET_FRACTION,
+  compactConversation,
+} from './compact';
+import { ErrorTracker } from './error-tracker';
 import {
   buildSystemPrompt,
   getEnvironmentDetails,
   loadProjectRules,
-} from "./system-prompt";
-import { processThinkBuffer } from "./think-parser";
+} from './system-prompt';
+import { processThinkBuffer } from './think-parser';
 import {
-  resolveContextWindow,
   computeInputTokenBudget,
   estimateMessagesTokens,
+  resolveContextWindow,
   trimConversationToBudget,
-} from "./token-budget";
+} from './token-budget';
 import {
-  COMPACT_BUDGET_FRACTION,
-  compactConversation,
-  buildCompactFrame,
-} from "./compact";
-import {
-  formatToolDescription,
   computeFileDiffSummary,
+  formatToolDescription,
   normalizeAliasedInput,
-} from "./tool-utils";
+  normalizeToolInput,
+} from './tool-utils';
 
 const DEFAULT_MAX_ITERATIONS = 50;
 const MAX_TRANSIENT_RETRIES = 3;
@@ -465,7 +469,12 @@ export async function* runAgentLoop(
       if (err instanceof Error && err.name === "AbortError") {
         trackEvent("agent.cancelled", { iteration });
         yield { type: "error", message: "Cancelled by user" };
-        return;
+        // Re-throw so the outer catch yields a 'done' event with the
+        // conversation accumulated so far. Without this, the generator
+        // returns silently, _persistSession is never called, and the
+        // next agent send starts with stale context — losing all prior
+        // turns from the aborted run.
+        throw err;
       }
       const errMsg = err instanceof Error ? err.message : String(err);
       if (!isNonRecoverableError(errMsg) && isTransientError(errMsg) && transientRetries < MAX_TRANSIENT_RETRIES) {
@@ -587,6 +596,10 @@ export async function* runAgentLoop(
         toolCall.name = resolvedName;
         normalizeAliasedInput(originalName, resolvedName, toolCall.input);
       }
+
+      // Universal input normalization — runs for ALL tools to catch parameter name variations
+      // that models (especially Gemini/OpenAI) frequently emit
+      normalizeToolInput(toolCall.name, toolCall.input);
 
       const handler = getToolHandler(toolCall.name, mode);
       if (handler === undefined) {

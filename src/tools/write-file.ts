@@ -1,22 +1,22 @@
-import * as vscode from 'vscode';
+import * as vscode from "vscode";
 
-import { MAX_WRITE_SIZE } from '../constants';
+import { MAX_WRITE_SIZE } from "../constants";
 import {
   cachedReadFile,
   cachedWriteFile,
-} from '../util/file-cache';
-import { resolveWorkspacePath } from '../util/path-safety';
+} from "../util/file-cache";
+import { resolveWorkspacePath } from "../util/path-safety";
 import {
   detectLineEnding,
   restoreLineEndings,
-} from './diff-match';
-import { stashBackup } from './file-backup';
-import { collectPostWriteDiagnostics } from './post-write-diagnostics';
+} from "./diff-match";
+import { stashBackup } from "./file-backup";
+import { collectPostWriteDiagnostics } from "./post-write-diagnostics";
 import type {
   ToolContext,
   ToolHandler,
   ToolResult,
-} from './types';
+} from "./types";
 
 export const writeToFileTool: ToolHandler = {
   definition: {

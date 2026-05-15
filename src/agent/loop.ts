@@ -1,47 +1,47 @@
-import * as vscode from 'vscode';
+import * as vscode from "vscode";
 
 import {
   ContentBlock,
   MajestixClient,
   Message,
-} from '../api/client';
+} from "../api/client";
 import {
   clearAllBackups,
   revertFile,
-} from '../tools/file-backup';
+} from "../tools/file-backup";
 import {
   getToolDefinitions,
   getToolHandler,
   getToolNames,
   resolveToolName,
-} from '../tools/registry';
-import type { ToolContext } from '../tools/types';
-import { resolveWorkspacePath } from '../util/path-safety';
-import { trackEvent } from '../util/telemetry';
+} from "../tools/registry";
+import type { ToolContext } from "../tools/types";
+import { resolveWorkspacePath } from "../util/path-safety";
+import { trackEvent } from "../util/telemetry";
 import {
   buildCompactFrame,
   COMPACT_BUDGET_FRACTION,
   compactConversation,
-} from './compact';
-import { ErrorTracker } from './error-tracker';
+} from "./compact";
+import { ErrorTracker } from "./error-tracker";
 import {
   buildSystemPrompt,
   getEnvironmentDetails,
   loadProjectRules,
-} from './system-prompt';
-import { processThinkBuffer } from './think-parser';
+} from "./system-prompt";
+import { processThinkBuffer } from "./think-parser";
 import {
   computeInputTokenBudget,
   estimateMessagesTokens,
   resolveContextWindow,
   trimConversationToBudget,
-} from './token-budget';
+} from "./token-budget";
 import {
   computeFileDiffSummary,
   formatToolDescription,
   normalizeAliasedInput,
   normalizeToolInput,
-} from './tool-utils';
+} from "./tool-utils";
 
 const DEFAULT_MAX_ITERATIONS = 50;
 const MAX_TRANSIENT_RETRIES = 3;

@@ -1,13 +1,13 @@
-import * as vscode from 'vscode';
+import * as vscode from "vscode";
 
-import { MAX_FILE_SIZE } from '../constants';
-import { cachedReadFile } from '../util/file-cache';
-import { resolveWorkspacePath } from '../util/path-safety';
+import { MAX_FILE_SIZE } from "../constants";
+import { cachedReadFile } from "../util/file-cache";
+import { resolveWorkspacePath } from "../util/path-safety";
 import type {
   ToolContext,
   ToolHandler,
   ToolResult,
-} from './types';
+} from "./types";
 
 export const readFileTool: ToolHandler = {
   definition: {

@@ -1,8 +1,8 @@
-import { exec } from 'child_process';
-import * as os from 'os';
-import * as vscode from 'vscode';
+import { exec } from "child_process";
+import * as os from "os";
+import * as vscode from "vscode";
 
-import { getRecentlyEditedFiles } from '../context/active-file';
+import { getRecentlyEditedFiles } from "../context/active-file";
 
 /**
  * Build the system prompt for the agent, including identity, rules, and environment context.

@@ -2,9 +2,9 @@
 // Tool utilities — approval UI helpers and aliased-input normalization
 // ---------------------------------------------------------------------------
 
-import * as vscode from 'vscode';
+import * as vscode from "vscode";
 
-import { resolveWorkspacePath } from '../util/path-safety';
+import { resolveWorkspacePath } from "../util/path-safety";
 
 /**
  * Returns a short human-readable description of a tool call for the approval dialog.

@@ -1,10 +1,10 @@
-import * as vscode from 'vscode';
+import * as vscode from "vscode";
 
 import {
   cachedReadFile,
   cachedWriteFile,
-} from '../util/file-cache';
-import { resolveWorkspacePath } from '../util/path-safety';
+} from "../util/file-cache";
+import { resolveWorkspacePath } from "../util/path-safety";
 import {
   detectLineEnding,
   escapeDollarSigns,
@@ -14,17 +14,17 @@ import {
   normalizeLineEndings,
   restoreLineEndings,
   stripLineNumberPrefixes,
-} from './diff-match';
+} from "./diff-match";
 import {
   revertFile,
   stashBackup,
-} from './file-backup';
-import { collectPostWriteDiagnostics } from './post-write-diagnostics';
+} from "./file-backup";
+import { collectPostWriteDiagnostics } from "./post-write-diagnostics";
 import type {
   ToolContext,
   ToolHandler,
   ToolResult,
-} from './types';
+} from "./types";
 
 export const editFileTool: ToolHandler = {
   definition: {

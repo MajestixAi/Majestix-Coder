@@ -1,7 +1,7 @@
-import * as path from 'path';
-import * as vscode from 'vscode';
+import * as path from "path";
+import * as vscode from "vscode";
 
-import { MAX_FILE_SIZE } from '../constants';
+import { MAX_FILE_SIZE } from "../constants";
 
 /**
  * Examples for resolveWorkspacePath:

@@ -1,30 +1,30 @@
-import * as vscode from 'vscode';
+import * as vscode from "vscode";
 
-import { MajestixClient } from './api/client';
-import { ApiKeyManager } from './auth/api-key';
-import { registerAskCommand } from './commands/ask';
-import { registerExplainCommand } from './commands/explain';
-import { registerFixCommand } from './commands/fix';
-import { registerGenerateCommand } from './commands/generate';
+import { MajestixClient } from "./api/client";
+import { ApiKeyManager } from "./auth/api-key";
+import { registerAskCommand } from "./commands/ask";
+import { registerExplainCommand } from "./commands/explain";
+import { registerFixCommand } from "./commands/fix";
+import { registerGenerateCommand } from "./commands/generate";
 import {
   registerCommitMessageCommand,
   registerPrDescriptionCommand,
-} from './commands/git-assist';
-import { registerRefactorCommand } from './commands/refactor';
-import { registerReviewCommand } from './commands/review';
-import { registerRunTodosCommand } from './commands/run-todos';
-import { startTrackingEdits } from './context/active-file';
-import { ChatPanelProvider } from './sidebar/chat-panel';
+} from "./commands/git-assist";
+import { registerRefactorCommand } from "./commands/refactor";
+import { registerReviewCommand } from "./commands/review";
+import { registerRunTodosCommand } from "./commands/run-todos";
+import { startTrackingEdits } from "./context/active-file";
+import { ChatPanelProvider } from "./sidebar/chat-panel";
 import {
   ensureChatInSecondarySidebar,
   revealChatPanel,
-} from './sidebar/reveal';
-import { disposeCommandResources } from './tools/execute-command';
+} from "./sidebar/reveal";
+import { disposeCommandResources } from "./tools/execute-command";
 import {
   createCreditsStatusBar,
   disposeCreditsStatusBar,
-} from './util/credits';
-import { disposeTelemetry } from './util/telemetry';
+} from "./util/credits";
+import { disposeTelemetry } from "./util/telemetry";
 
 const TELEMETRY_CONSENT_KEY = "majestix.telemetryConsentPrompted";
 

@@ -72,10 +72,17 @@ export async function computeFileDiffSummary(
   if (toolName === "write_to_file") {
     const newContent = input.content as string | undefined;
     if (newContent === undefined) { return undefined; }
+    const newLines = newContent.split("\n").length;
     if (oldContent.length === 0) {
-      return `New file: ${String(newContent.split("\n").length)} lines`;
+      return `New file: ${String(newLines)} lines`;
     }
-    return buildCompactDiff(oldContent, newContent, filePath);
+    // Simple summary — no expensive line-by-line diff loop.
+    // The model provides complete new content for write_to_file;
+    // a detailed diff is unnecessary and causes 20+ second freezes on large files.
+    const oldLines = oldContent.split("\n").length;
+    const added = newLines - oldLines;
+    const desc = added >= 0 ? `+${String(added)} lines` : `${String(added)} lines`;
+    return `Overwrite ${filePath} (${String(oldLines)} → ${String(newLines)} lines, ${desc})`;
   }
 
   if (toolName === "edit_file") {
@@ -112,39 +119,6 @@ export async function computeFileDiffSummary(
  * @param filePath - The file path shown in the diff header.
  * @returns A compact diff summary string showing changed lines.
  */
-function buildCompactDiff(oldContent: string, newContent: string, filePath: string): string {
-  const oldLines = oldContent.split("\n");
-  const newLines = newContent.split("\n");
-  const diffLines: string[] = [];
-  const maxDiffLines = 12;
-  let changeCount = 0;
-  const minLen = Math.min(oldLines.length, newLines.length);
-
-  for (let i = 0; i < minLen && diffLines.length < maxDiffLines; i++) {
-    if (oldLines[i] !== newLines[i]) {
-      changeCount++;
-      diffLines.push(`-${String(i + 1)}: ${oldLines[i].slice(0, 80)}`);
-      diffLines.push(`+${String(i + 1)}: ${newLines[i].slice(0, 80)}`);
-    }
-  }
-
-  if (newLines.length > oldLines.length) {
-    changeCount += newLines.length - oldLines.length;
-    if (diffLines.length < maxDiffLines) {
-      diffLines.push(`+${String(oldLines.length + 1)}..${String(newLines.length)}: (${String(newLines.length - oldLines.length)} new lines)`);
-    }
-  } else if (oldLines.length > newLines.length) {
-    changeCount += oldLines.length - newLines.length;
-    if (diffLines.length < maxDiffLines) {
-      diffLines.push(`-${String(newLines.length + 1)}..${String(oldLines.length)}: (${String(oldLines.length - newLines.length)} removed lines)`);
-    }
-  }
-
-  if (changeCount === 0) { return "No changes detected"; }
-  const truncated = diffLines.length >= maxDiffLines ? "\n..." : "";
-  return `${filePath}: ${String(changeCount)} change(s)\n${diffLines.join("\n")}${truncated}`;
-}
-
 /**
  * Normalizes tool input params from aliased/foreign model schemas to our canonical schema.
  * Handles str_replace_editor, bash, view aliases, and many Gemini/OpenAI variations.

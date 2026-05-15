@@ -619,10 +619,22 @@ export async function* runAgentLoop(
       const shouldAutoApprove = autoApprove === "all" || (autoApprove === "readOnly" && isReadOnlyCommand);
 
       if (handler.requiresApproval(toolCall.input) && !shouldAutoApprove) {
+        // Check abort signal BEFORE computing diff and showing approval UI
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- signal can be aborted externally by AbortController
+        if (signal.aborted) {
+          yield { type: "error", message: "Cancelled by user" };
+          throw new Error("Cancelled by user");
+        }
         const description = formatToolDescription(toolCall.name, toolCall.input);
         const diffSummary = (toolCall.name === "write_to_file" || toolCall.name === "edit_file" || toolCall.name === "apply_patch")
           ? await computeFileDiffSummary(workspaceRoot, toolCall.name, toolCall.input)
           : undefined;
+        // Check abort signal AFTER computing diff (which may have taken time)
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- signal can be aborted externally by AbortController
+        if (signal.aborted) {
+          yield { type: "error", message: "Cancelled by user" };
+          throw new Error("Cancelled by user");
+        }
         const approved = await requestApproval(toolCall.name, description, diffSummary);
 
         if (!approved) {

@@ -64,6 +64,10 @@ export function App({ logoUri }: Props) {
             dispatch({ type: "APPROVAL_REQUEST", toolName: msg.toolName, description: msg.description, detail: msg.detail });
           }
           break;
+        case "approval_detail_update":
+          // Diff summary resolved after card was shown — patch it in without re-rendering the whole card.
+          dispatch({ type: "APPROVAL_DETAIL_UPDATE", toolName: msg.toolName, detail: msg.detail });
+          break;
         case "completion":
           dispatch({ type: "COMPLETION", result: msg.result, command: msg.command });
           break;

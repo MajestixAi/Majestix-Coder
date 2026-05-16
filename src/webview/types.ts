@@ -147,6 +147,7 @@ export type ExtensionInMessage =
   | { type: "file_edited"; path: string; op: "write" | "edit" | "patch" }
   | { type: "command_output"; content: string }
   | { type: "approval_request"; toolName: string; description: string; detail?: string }
+  | { type: "approval_detail_update"; toolName: string; detail: string }
   | { type: "completion"; result: string; command?: string }
   | { type: "credits"; model: string; credits_used: number }
   | { type: "done"; conversation: unknown[] }

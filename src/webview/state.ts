@@ -154,6 +154,7 @@ export type Action =
   // Approval
   | { type: "APPROVAL_REQUEST"; toolName: string; description: string; detail?: string }
   | { type: "APPROVAL_RESOLVE"; approved: boolean }
+  | { type: "APPROVAL_DETAIL_UPDATE"; toolName: string; detail: string }
 
   // Completion & credits
   | { type: "COMPLETION"; result: string; command?: string }
@@ -455,6 +456,19 @@ export function reducer(state: AppState, action: Action): AppState {
         return item;
       });
       return { ...state, items: updated, hasPendingApproval: false };
+    }
+
+    case "APPROVAL_DETAIL_UPDATE": {
+      // Patch the detail onto the most recent unresolved approval card of the same tool.
+      // This fires after computeFileDiffSummary resolves, which may be slightly after
+      // the card was already shown (since we no longer block on the diff before showing it).
+      const updated = state.items.map(item => {
+        if (item.kind === "approval" && !item.approval.resolved && item.approval.toolName === action.toolName) {
+          return { ...item, approval: { ...item.approval, detail: action.detail } };
+        }
+        return item;
+      });
+      return { ...state, items: updated };
     }
 
     case "COMPLETION": {

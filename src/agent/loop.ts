@@ -626,16 +626,34 @@ export async function* runAgentLoop(
           throw new Error("Cancelled by user");
         }
         const description = formatToolDescription(toolCall.name, toolCall.input);
-        const diffSummary = (toolCall.name === "write_to_file" || toolCall.name === "edit_file" || toolCall.name === "apply_patch")
-          ? await computeFileDiffSummary(workspaceRoot, toolCall.name, toolCall.input)
-          : undefined;
-        // Check abort signal AFTER computing diff (which may have taken time)
+
+        // Fire the diff summary computation concurrently with showing the approval
+        // card — this eliminates the delay caused by awaiting a file read BEFORE
+        // the card is visible. The approval promise and diff promise race; if diff
+        // wins it updates the card detail before the user clicks, otherwise the
+        // card just shows without the detail line.
+        const needsDiff = toolCall.name === "write_to_file" || toolCall.name === "edit_file" || toolCall.name === "apply_patch";
+        const diffPromise = needsDiff
+          ? computeFileDiffSummary(workspaceRoot, toolCall.name, toolCall.input)
+          : Promise.resolve(undefined);
+
+        // Show the card immediately — no blocking wait for diff
+        const approvalPromise = requestApproval(toolCall.name, description, undefined);
+
+        // If the diff resolves before the user acts, push an update to the card
+        void diffPromise.then((diffSummary) => {
+          if (diffSummary !== undefined) {
+            postMessage({ type: "approval_detail_update", toolName: toolCall.name, detail: diffSummary });
+          }
+        });
+
+        // Check abort signal while waiting for approval
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- signal can be aborted externally by AbortController
         if (signal.aborted) {
           yield { type: "error", message: "Cancelled by user" };
           throw new Error("Cancelled by user");
         }
-        const approved = await requestApproval(toolCall.name, description, diffSummary);
+        const approved = await approvalPromise;
 
         if (!approved) {
           trackEvent("approval.rejected", { tool: toolCall.name, iteration });

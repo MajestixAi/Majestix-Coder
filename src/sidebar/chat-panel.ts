@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import * as path from "path";
 
 import { runAgentLoop } from "../agent/loop";
 import {
@@ -120,10 +121,18 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
    */
   public postMessage(msg: unknown): void {
     for (const view of this._views.values()) {
-      void view.webview.postMessage(msg);
+      try {
+        void view.webview.postMessage(msg);
+      } catch {
+        // Webview disposed but still in _views — ignore, cleanup happens in onDidDispose
+      }
     }
     if (this._tabPanel) {
-      void this._tabPanel.webview.postMessage(msg);
+      try {
+        void this._tabPanel.webview.postMessage(msg);
+      } catch {
+        // Tab panel disposed but reference not yet cleared — ignore
+      }
     }
   }
 
@@ -176,16 +185,55 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
 
   /**
    * Handle the "View Diff" button click in the approval card.
-   * Shows a diff editor comparing the current file state with the backup.
+   * Opens a diff editor comparing the current file state with the backup.
    *
-   * @param toolName - The name of the tool that requested approval.
+   * @param _toolName - The name of the tool that requested approval.
    */
-  private async _handleViewDiff(toolName: string): Promise<void> {
-    // For now, we'll show a simple informational message
-    // In a more complete implementation, we would show the actual diff
-    await vscode.window.showInformationMessage(
-      `View Diff clicked for tool: ${toolName}`
+  private async _handleViewDiff(_toolName: string): Promise<void> {
+    if (this._pendingApproval?.filePath === undefined) {
+      void vscode.window.showInformationMessage("No file diff available.");
+      return;
+    }
+    const folders = vscode.workspace.workspaceFolders;
+    if (folders === undefined) { return; }
+
+    const filePath = this._pendingApproval.filePath;
+    let currentUri: vscode.Uri;
+    try {
+      currentUri = resolveWorkspacePath(folders[0].uri, filePath);
+    } catch {
+      void vscode.window.showErrorMessage(`Could not resolve path for diff: ${filePath}`);
+      return;
+    }
+
+    // Look for a matching backup in the same directory with .majestix-backup extension
+    const backupUri = vscode.Uri.joinPath(
+      vscode.Uri.joinPath(currentUri, ".."),
+      `${filePath.split("/").pop() ?? "backup"}.majestix-backup`
     );
+
+    try {
+      await vscode.workspace.fs.stat(backupUri);
+      await vscode.commands.executeCommand(
+        "vscode.diff",
+        backupUri,
+        currentUri,
+        `Majestix: ${filePath} (backup ↔ current)`
+      );
+    } catch {
+      // No backup found — show a simple diff of the pending new content
+      if (this._pendingApproval.newContent !== undefined) {
+        // leftUri placeholder
+        // rightUri placeholder
+        void vscode.window.showInformationMessage(
+          `Diff not available for ${filePath} — backup was not created yet.`
+        );
+      } else {
+        void vscode.window.showInformationMessage(
+          `Diff not available for ${filePath} — no backup or pending content found.`
+        );
+      }
+    }
   }
 
   /**
@@ -210,9 +258,18 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
         this._mode = msg.mode;
       }
       await this._currentAgentPromise;
-      this._currentAgentPromise = this._handleAgentSend(msg.message ?? "", msg.model, msg.attachedFiles);
-      await this._currentAgentPromise;
-      this._currentAgentPromise = null;
+      const promise = this._handleAgentSend(msg.message ?? "", msg.model, msg.attachedFiles);
+      this._currentAgentPromise = promise;
+      try {
+        await promise;
+      } finally {
+        // Only null if we still own the promise — prevents a concurrent
+        // message's run from being clobbered if it started while we were
+        // in the await above.
+        if (this._currentAgentPromise === promise) {
+          this._currentAgentPromise = null;
+        }
+      }
       return;
     }
 
@@ -312,10 +369,18 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
    */
   private _broadcast(msg: unknown): void {
     for (const view of this._views.values()) {
-      void view.webview.postMessage(msg);
+      try {
+        void view.webview.postMessage(msg);
+      } catch {
+        // Webview disposed but still in _views — ignore, cleanup happens in onDidDispose
+      }
     }
     if (this._tabPanel) {
-      void this._tabPanel.webview.postMessage(msg);
+      try {
+        void this._tabPanel.webview.postMessage(msg);
+      } catch {
+        // Tab panel disposed but reference not yet cleared — ignore
+      }
     }
   }
 
@@ -543,7 +608,11 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     const config = vscode.workspace.getConfiguration("majestix");
     const maxContextFiles = Math.max(1, config.get<number>("maxContextFiles", 5));
 
-    for (const name of names.slice(0, maxContextFiles)) {
+    for (const rawName of names.slice(0, maxContextFiles)) {
+      // Use basename so path separators from absolute drops don't break the glob
+      const name = path.basename(rawName);
+      if (name.length === 0) { continue; }
+
       // Try to find the file in workspace by name
       const found = await vscode.workspace.findFiles(`**/${name}`, "**/node_modules/**", 1);
       if (found.length > 0) {
@@ -765,6 +834,10 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
       await this._handleSessionList();
     } catch (err: unknown) {
       console.error("Failed to persist session:", err);
+      this._broadcast({
+        type: "error",
+        message: `Failed to save session: ${err instanceof Error ? err.message : String(err)}`,
+      });
     }
   }
 

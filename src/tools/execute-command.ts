@@ -217,8 +217,9 @@ function ensureMirrorTerminal(): vscode.Terminal {
     close: () => { /* no-op */ },
   };
 
-  mirrorTerminal = vscode.window.createTerminal({ name: "Majestix Command Output", pty });
-  return mirrorTerminal;
+  const term = vscode.window.createTerminal({ name: "Majestix Command Output", pty });
+  mirrorTerminal = term;
+  return term;
 }
 
 /**

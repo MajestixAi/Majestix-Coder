@@ -200,12 +200,10 @@ export class MajestixClient {
       if (res.status === 402) {
         throw new Error("Insufficient credits — top up in the web dashboard");
       }
+      // 429 is handled inside fetchWithRetry (retried with backoff). If we see it
+      // here, max retries have been exhausted — just throw a generic message.
       if (res.status === 429) {
-        let rateLimitMsg = "Rate limited — wait a moment and try again.";
-        try {
-          rateLimitMsg = parse429((await res.json()) as RateLimitBody);
-        } catch { /* ignore JSON parse failures */ }
-        throw new Error(rateLimitMsg);
+        throw new Error("Rate limited — max retries exhausted. Wait a moment and try again.");
       }
       let detail = res.statusText;
       try {
@@ -406,8 +404,16 @@ async function fetchWithRetry(
           });
           continue;
         }
-        // Max retries reached — fall through to throw below
-        throw new Error(`HTTP ${String(res.status)}: ${res.statusText}`);
+        // Max retries reached — try to read body for a better message, then throw
+        let detail = res.statusText;
+        try {
+          const body = (await res.json()) as { detail?: string; message?: string; retry_after?: number };
+          detail = body.detail ?? body.message ?? detail;
+          if (typeof body.retry_after === "number") {
+            detail += ` (retry after ${String(body.retry_after)}s)`;
+          }
+        } catch { /* ignore JSON parse failures */ }
+        throw new Error(`HTTP ${String(res.status)}: ${detail}`);
       }
 
       // Non-transient error or success — return / throw immediately

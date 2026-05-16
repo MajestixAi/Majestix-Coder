@@ -3,6 +3,7 @@ import * as os from "os";
 import * as vscode from "vscode";
 
 import { getRecentlyEditedFiles } from "../context/active-file";
+import { trackEvent } from "../util/telemetry";
 
 /**
  * Build the system prompt for the agent, including identity, rules, and environment context.
@@ -185,7 +186,8 @@ export async function getEnvironmentDetails(): Promise<string> {
 }
 
 /**
- * Runs a shell command quietly, returning stdout or empty string on failure.
+ * Runs a shell command quietly, returning stdout or an empty string on failure.
+ * Logs failures to telemetry so the agent doesn't silently assume no git repo.
  *
  * @param command - The shell command to execute.
  * @param cwd - The working directory for the command.
@@ -193,8 +195,15 @@ export async function getEnvironmentDetails(): Promise<string> {
  */
 function runShellQuiet(command: string, cwd: string): Promise<string> {
   return new Promise((resolve) => {
-    exec(command, { cwd, timeout: 5000, maxBuffer: 8192 }, (err, stdout) => {
-      resolve(err !== null ? "" : stdout.trim());
+    exec(command, { cwd, timeout: 5000, maxBuffer: 8192 }, (err, stdout, stderr) => {
+      if (err !== null) {
+        const stderrStr = typeof stderr === "string" ? stderr : "";
+        const msg = err.message || stderrStr.trim() || "unknown error";
+        trackEvent("shell.quiet_error", { command: command.split(" ")[0], error: msg.slice(0, 200) });
+        resolve("");
+        return;
+      }
+      resolve(stdout.trim());
     });
   });
 }

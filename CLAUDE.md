@@ -2,7 +2,7 @@
 
 Agentic AI coding assistant for VSCode (branded **Majestix AI**). Reads files, writes code, runs commands, and searches the user's codebase autonomously with human approval gates.
 
-**Git remote**: `MajestixAi/inference-vscode` (branch: `dev`)
+**Git remote**: `MajestixAi/Majestix-Coder` (branch: `main`)
 **Backend**: Cloud Run harness API — see `../inference-harness/`
 
 ## Tech Stack
@@ -89,11 +89,13 @@ src/
 
 Each `/code` call = one LLM round-trip. Extension owns the conversation and loop — backend is a model proxy.
 
-**Key constants** in `loop.ts`:
+**Key constants** (most now live in `constants.ts`; context math in `token-budget.ts`):
 - `DEFAULT_MAX_ITERATIONS = 50` (overridden by `majestix.maxIterations` setting)
-- `MAX_OUTPUT_TOKENS = 16_384`
-- `DEFAULT_CONTEXT_WINDOW = 200_000`
-- Automatic context pruning when conversation exceeds token budget (keeps last 8 messages)
+- `MAX_RESUME_MESSAGES = 20` — tail kept when resuming a long session without a compact summary
+- `MAX_TOOL_RESULT_CHARS = 30_000` — hard cap per tool result (head + tail kept)
+- `DEFAULT_CONTEXT_WINDOW = 200_000` (`token-budget.ts`, used when a model's window is unknown)
+- No fixed output-token cap — the loop sends no `max_tokens` ceiling
+- Automatic context trimming when the conversation exceeds the per-model input token budget (`trimConversationToBudget`); compaction (LLM summary) runs on the first iteration when the budget fraction is exceeded
 
 ### Conversation Compaction (`agent/compact.ts`)
 
@@ -275,13 +277,13 @@ npm run lint         # eslint
 **Always run all three checks**: `npm run typecheck && npm run lint && npm run build`
 
 ### Testing in VSCode
-1. Open `inference-vscode/` in VSCode
+1. Open the extension folder (`Majestix-Coder v2/`) in VSCode
 2. Press F5 → Extension Development Host
 3. Extension appears in secondary sidebar
 4. Set API key when prompted
 
 ### Packaging
 ```bash
-npm run package      # Creates majestix-ai-0.1.0.vsix
-code --install-extension majestix-ai-0.1.0.vsix
+npm run package      # Creates majestix-coder-1.0.0.vsix
+code --install-extension majestix-coder-1.0.0.vsix
 ```

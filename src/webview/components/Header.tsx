@@ -52,13 +52,9 @@ export function Header({
     postMessage({ type: "downloadChat", content });
   }, [hasMessages, items, selectedModel]);
 
-  // Group models by provider
-  const byProvider: Record<string, ModelInfo[]> = {};
-  for (const m of models) {
-    const p = m.provider || "Other";
-    if (!(p in byProvider)) byProvider[p] = [];
-    byProvider[p].push(m);
-  }
+  // Flat, alphabetical model list. Provider is irrelevant to the user — as far as
+  // they're concerned the provider is Majestix AI — so we don't group or label by it.
+  const sortedModels = [...models].sort((a, b) => a.display_name.localeCompare(b.display_name));
 
   return (
     <div class="header">
@@ -107,17 +103,13 @@ export function Header({
         onChange={(e) => { dispatch({ type: "SET_MODEL", model: (e.target as HTMLSelectElement).value }); }}
       >
         <option value="">Auto (recommended)</option>
-        {Object.entries(byProvider).map(([provider, providerModels]) => (
-          <optgroup label={provider.charAt(0).toUpperCase() + provider.slice(1)} key={provider}>
-            {providerModels.map(m => {
-              let label = m.display_name;
-              if (m.context_window > 0) label += ` (${Math.round(m.context_window / 1000)}K)`;
-              const chatOnly = mode === "code" && m.supports_tools === false;
-              if (chatOnly) label += " (chat only)";
-              return <option value={m.key} key={m.key} disabled={chatOnly}>{label}</option>;
-            })}
-          </optgroup>
-        ))}
+        {sortedModels.map(m => {
+          let label = m.display_name;
+          if (m.context_window > 0) label += ` (${Math.round(m.context_window / 1000)}K)`;
+          const chatOnly = mode === "code" && m.supports_tools === false;
+          if (chatOnly) label += " (chat only)";
+          return <option value={m.key} key={m.key} disabled={chatOnly}>{label}</option>;
+        })}
       </select>
 
       {hasMessages && (
